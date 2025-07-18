@@ -1,12 +1,13 @@
 # Sakura Echo 🌸
 
 ## 📖 Documentation Available in Multiple Languages
-**This README is available in both English and Chinese. Please scroll down or use the navigation links below.**
-**本文档提供中英双语版本，请向下滚动或使用下方导航链接。**
 
 **Sakura Echo** is an innovative Electron-based music player that allows you to create a personalized audio library from bilibili(哔哩哔哩) content. By sharing video links from bilibili, the application downloads and converts videos into high-quality audio files, enabling you to build a local music collection.
 
 **Sakura Echo（樱音）** 是一款创新的基于 Electron 的音乐播放器，允许您从 bilibili(哔哩哔哩) 内容创建个性化音频库。通过分享 bilibili 视频链接，应用程序下载并转换视频为高质量音频文件，帮助您构建本地音乐收藏。
+
+**This README is available in both English and Chinese. Please scroll down or use the navigation links below.**
+**本文档提供中英双语版本，请向下滚动或使用下方导航链接。**
 
 [English](#english) | [中文](#chinese)
 
