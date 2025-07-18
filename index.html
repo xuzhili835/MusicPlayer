@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' data: blob: file:; connect-src 'self' https: http: wss: ws:; font-src 'self' data:;">
+    <title>Sakura Echo - 声织四季，瓣落成音</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <!-- 标题栏 -->
+    <div class="title-bar">
+        <div class="title-bar-left">
+            <div class="app-icon" id="app-icon">
+                <!-- Sakura Echo Logo will be inserted here -->
+            </div>
+            <div class="app-title">Sakura Echo</div>
+            <div class="app-slogan">声织四季，瓣落成音</div>
+        </div>
+        <div class="title-bar-center">
+            <div class="search-container">
+                <input type="text" id="search-input" placeholder="搜索音乐标题或艺术家...">
+                <button id="search-btn" class="btn-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+        <div class="title-bar-right">
+            <button id="window-minimize-btn" class="window-btn" title="最小化">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+            </button>
+            <button id="window-maximize-btn" class="window-btn" title="最大化">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                </svg>
+            </button>
+            <button id="window-close-btn" class="window-btn close" title="关闭">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="6" x2="6" y2="18"/>
+                    <line x1="6" y1="6" x2="18" y2="18"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- 主容器 -->
+    <div class="main-container">
+        <!-- 左侧导航栏 -->
+        <aside class="sidebar">
+            <nav class="sidebar-nav">
+                <div class="nav-item active" data-view="all-songs">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M9 18V5l12-2v13"/>
+                            <circle cx="6" cy="18" r="3"/>
+                            <circle cx="18" cy="16" r="3"/>
+                        </svg>
+                    </span>
+                    <span class="nav-text">所有歌曲</span>
+                </div>
+                <div class="nav-item" data-view="recent">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <polyline points="12,6 12,12 16,14"/>
+                        </svg>
+                    </span>
+                    <span class="nav-text">最近播放</span>
+                </div>
+                <div class="nav-separator"></div>
+                <div class="nav-header">
+                    <span>我的歌单</span>
+                    <button class="nav-action" id="create-playlist-btn" title="创建歌单">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="12" y1="5" x2="12" y2="19"/>
+                            <line x1="5" y1="12" x2="19" y2="12"/>
+                        </svg>
+                    </button>
+                </div>
+                <div class="playlists-container">
+                    <!-- 歌单列表将在这里动态生成 -->
+                </div>
+                <div class="nav-separator"></div>
+                <div class="nav-item" id="add-files-btn">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                        </svg>
+                    </span>
+                    <span class="nav-text">添加本地音乐</span>
+                </div>
+                <div class="nav-item" id="console-btn">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+                            <line x1="8" y1="21" x2="16" y2="21"/>
+                            <line x1="12" y1="17" x2="12" y2="21"/>
+                        </svg>
+                    </span>
+                    <span class="nav-text">检查控制台</span>
+                </div>
+                <div class="nav-item" id="lyrics-window-btn">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+                            <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+                            <line x1="12" y1="19" x2="12" y2="23"/>
+                            <line x1="8" y1="23" x2="16" y2="23"/>
+                        </svg>
+                    </span>
+                    <span class="nav-text">桌面歌词</span>
+                </div>
+                <div class="nav-item" id="refresh-ui-btn">
+                    <span class="nav-icon">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 4v6h6"/>
+                            <path d="M3.51 15a9 9 0 0 0 2.13 3.09l.02.02A9 9 0 0 0 13 21.99c4.97 0 9-4.03 9-9s-4.03-9-9-9c-1.74 0-3.36.49-4.74 1.35"/>
+                            <path d="M11 10l2 2 4-4"/>
+                        </svg>
+                    </span>
+                    <span class="nav-text">刷新界面</span>
+                </div>
+            </nav>
+        </aside>
+
+        <!-- 主内容区 -->
+        <main class="content">
+            <!-- 内容头部 -->
+            <header class="content-header">
+                <div class="view-title">
+                    <h1 id="current-view-title">所有歌曲</h1>
+                    <span id="current-view-count">0 首歌曲</span>
+                </div>
+                <div class="view-actions">
+                    <button id="download-btn" class="btn btn-primary">
+                        <span class="btn-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                <polyline points="7,10 12,15 17,10"/>
+                                <line x1="12" y1="15" x2="12" y2="3"/>
+                            </svg>
+                        </span>
+                        下载外部音源
+                    </button>
+                    <button id="shuffle-all-btn" class="btn btn-secondary">
+                        <span class="btn-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="16,3 21,3 21,8"/>
+                                <path d="M4 20L21 3"/>
+                                <polyline points="21,16 21,21 16,21"/>
+                                <path d="M15 15L21 21"/>
+                                <path d="M4 4L9 9"/>
+                            </svg>
+                        </span>
+                        随机播放全部
+                    </button>
+                </div>
+            </header>
+
+            <!-- 歌曲列表 -->
+            <div class="songs-container">
+                <div class="songs-header">
+                    <div class="song-col-index">#</div>
+                    <div class="song-col-title">标题</div>
+                    <div class="song-col-artist">艺术家</div>
+                    <div class="song-col-duration">时长</div>
+                </div>
+                <div id="songs-list" class="songs-list">
+                    <!-- 歌曲列表将动态生成 -->
+                </div>
+            </div>
+
+            <!-- 空状态 -->
+            <div id="empty-state" class="empty-state" style="display: none;">
+                <div class="empty-icon" id="empty-state-icon">
+                    <!-- 樱花主题图标将在这里插入 -->
+                </div>
+                <h3>还没有音乐</h3>
+                <p>添加本地音乐文件或从外部下载音源开始您的音乐之旅</p>
+                <div class="empty-slogan">🌸 声织四季，瓣落成音 🌸</div>
+                <div class="empty-actions">
+                    <button id="empty-download-btn" class="btn btn-primary">下载外部音源</button>
+                    <button id="empty-add-files-btn" class="btn btn-secondary">添加本地音乐</button>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- 播放控制栏 -->
+    <footer class="player-bar">
+        <div class="player-info">
+            <div class="song-cover">
+                <img id="current-cover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 24 24' fill='%23ccc'%3E%3Cpath d='M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z'/%3E%3C/svg%3E" alt="专辑封面">
+            </div>
+            <div class="song-details">
+                <div class="song-title" id="current-title">未选择歌曲</div>
+                <div class="song-artist" id="current-artist">--</div>
+            </div>
+        </div>
+
+        <div class="player-controls">
+            <div class="control-buttons">
+                <button id="shuffle-btn" class="btn-icon" title="随机播放">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="16,3 21,3 21,8"/>
+                        <path d="M4 20L21 3"/>
+                        <polyline points="21,16 21,21 16,21"/>
+                        <path d="M15 15L21 21"/>
+                        <path d="M4 4L9 9"/>
+                    </svg>
+                </button>
+                <button id="prev-btn" class="btn-icon" title="上一首">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/>
+                    </svg>
+                </button>
+                <button id="play-btn" class="btn-icon btn-play" title="播放">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M8 5v14l11-7z"/>
+                    </svg>
+                </button>
+                <button id="next-btn" class="btn-icon" title="下一首">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z"/>
+                    </svg>
+                </button>
+                <button id="repeat-btn" class="btn-icon" title="重复播放">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="17,1 21,5 17,9"/>
+                        <path d="M3 11V9a4 4 0 0 1 4-4h14"/>
+                        <polyline points="7,23 3,19 7,15"/>
+                        <path d="M21 13v2a4 4 0 0 1-4 4H3"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="progress-container">
+                <span id="current-time">0:00</span>
+                <div class="progress-bar-container">
+                    <div class="progress-bar">
+                        <div id="progress-filled" class="progress-filled"></div>
+                        <div id="progress-handle" class="progress-handle"></div>
+                    </div>
+                </div>
+                <span id="total-time">0:00</span>
+            </div>
+        </div>
+
+        <div class="player-volume">
+            <button id="volume-btn" class="btn-icon" title="音量">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 5L6 9H2v6h4l5 4V5z"/>
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+                </svg>
+            </button>
+            <div class="volume-slider">
+                <input type="range" id="volume-range" min="0" max="100" value="50">
+            </div>
+            <div class="volume-display" id="volume-display">50</div>
+        </div>
+    </footer>
+
+    <!-- 下载对话框 -->
+    <div id="download-dialog" class="dialog-overlay" style="display: none;">
+        <div class="dialog">
+            <div class="dialog-header">
+                <h3>下载外部音源</h3>
+                <button id="download-dialog-close" class="btn-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="dialog-content">
+                <div class="input-group">
+                    <label for="download-url">外部视频链接</label>
+                    <input type="text" id="download-url" placeholder="粘贴分享链接 (支持带标题的完整分享文本)">
+                </div>
+                <div id="video-preview" class="video-preview" style="display: none;">
+                    <img id="video-thumbnail" class="video-thumbnail" alt="视频缩略图">
+                    <div class="video-info">
+                        <h4 id="video-title"></h4>
+                        <p id="video-uploader"></p>
+                        <p id="video-duration"></p>
+                    </div>
+                </div>
+                <div class="download-options">
+                    <label>
+                        <input type="checkbox" id="download-lyrics" checked>
+                        同时下载歌词（如果有）
+                    </label>
+                </div>
+                <div id="download-progress" class="download-progress" style="display: none;">
+                    <div class="progress-info">
+                        <span id="download-status">准备下载...</span>
+                        <span id="download-percentage">0%</span>
+                    </div>
+                    <div class="progress-bar">
+                        <div id="download-progress-filled" class="progress-filled"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button id="download-cancel-btn" class="btn btn-secondary">取消</button>
+                <button id="download-start-btn" class="btn btn-primary">开始下载</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 创建歌单对话框 -->
+    <div id="playlist-dialog" class="dialog-overlay" style="display: none;">
+        <div class="dialog">
+            <div class="dialog-header">
+                <h3>创建新歌单</h3>
+                <button id="playlist-dialog-close" class="btn-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="dialog-content">
+                <div class="input-group">
+                    <label for="playlist-name">歌单名称</label>
+                    <input type="text" id="playlist-name" placeholder="输入歌单名称">
+                </div>
+            </div>
+            <div class="dialog-actions">
+                <button id="playlist-cancel-btn" class="btn btn-secondary">取消</button>
+                <button id="playlist-create-btn" class="btn btn-primary">创建</button>
+            </div>
+        </div>
+    </div>
+
+
+
+    <!-- 消息提示 -->
+    <div id="message-container" class="message-container">
+        <!-- 消息将动态添加 -->
+    </div>
+
+    <!-- 音频元素 -->
+    <audio id="audio-player" preload="metadata"></audio>
+
+    <!-- 脚本 -->
+    <script src="icons.js"></script>
+    <script src="renderer.js"></script>
+    
+    <!-- Sakura Echo Logo 初始化 -->
+    <script>
+        // 确保在DOM和所有脚本加载完成后插入樱花Logo
+        window.addEventListener('load', function() {
+            // 延迟执行，确保所有资源都已加载
+            setTimeout(function() {
+                const appIconElement = document.getElementById('app-icon');
+                if (appIconElement && window.icons && window.icons.sakuraLogo) {
+                    appIconElement.innerHTML = window.icons.sakuraLogo;
+                    console.log('Sakura logo loaded successfully');
+                } else {
+                    console.warn('Failed to load Sakura logo:', {
+                        appIconElement: !!appIconElement,
+                        icons: !!window.icons,
+                        sakuraLogo: !!(window.icons && window.icons.sakuraLogo)
+                    });
+                }
+                
+                // 为空状态添加樱花主题图标
+                const emptyStateIcon = document.getElementById('empty-state-icon');
+                if (emptyStateIcon && window.icons && window.icons.sakuraLogo) {
+                    // 创建一个放大版本的樱花Logo用于空状态
+                    const largeIcon = window.icons.sakuraLogo.replace(/width="24"/, 'width="64"').replace(/height="24"/, 'height="64"');
+                    emptyStateIcon.innerHTML = largeIcon;
+                }
+            }, 100);
+        });
+    </script>
+</body>
+</html>

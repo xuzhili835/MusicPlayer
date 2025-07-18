@@ -1,0 +1,88 @@
+{
+  "name": "sakura-echo",
+  "version": "1.0.0",
+  "description": "Sakura Echo - 声织四季，瓣落成音",
+  "main": "main.js",
+  "scripts": {
+    "dev": "electron .",
+    "start": "electron .",
+    "build": "electron-builder --win",
+    "dist": "npm run build",
+    "postinstall": "electron-builder install-app-deps",
+    "test": "node test-tools.js",
+    "test-tools": "node test-tools.js"
+  },
+  "keywords": ["electron", "music", "player", "bilibili"],
+  "author": "BiliMusicPlayer",
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "37.2.0",
+    "electron-builder": "26.0.12"
+  },
+  "dependencies": {
+    "execa": "^9.6.0",
+    "fs-extra": "^11.3.0",
+    "music-metadata": "^11.6.0",
+    "sqlite3": "^5.1.7",
+    "extract-zip": "^2.0.1",
+    "tar": "^6.1.11"
+  },
+  "build": {
+    "appId": "com.bilimusicplayer.sakura-echo",
+    "productName": "Sakura Echo",
+    "directories": {
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": ["**/*"]
+      }
+    ],
+    "files": [
+      "**/*",
+      "!build/**/*",
+      "!dist/**/*",
+      "!src/**/*",
+      "!docs/**/*",
+      "!*.md",
+      "!*.log",
+      "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
+      "!.editorconfig",
+      "!**/._*",
+      "!**/{.DS_Store,.git,.hg,.svn,CVS,RCS,SCCS,.gitignore,.gitattributes}",
+      "!**/{__pycache__,thumbs.db,.flowconfig,.idea,.vs,.nyc_output}",
+      "!**/{appveyor.yml,.travis.yml,circle.yml}",
+      "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}",
+      "!temp_downloads/**/*",
+      "!bin/**/*"
+    ],
+    "asarUnpack": [
+      "music.db"
+    ],
+    "compression": "maximum",
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "icon": "build/converted-image.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/converted-image.ico",
+      "uninstallerIcon": "build/converted-image.ico",
+      "installerHeaderIcon": "build/converted-image.ico",
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Sakura Echo"
+    }
+  }
+}
