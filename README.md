@@ -116,7 +116,7 @@
 #### Build from Source
 ```bash
 # Clone repository
-git clone https://github.com/xuzhili835/Sakura-Echo.git
+git clone https://github.com/xuzhili835/MusicPlayer.git
 cd Sakura-Echo
 
 # Install dependencies
@@ -369,7 +369,7 @@ This project is open sourced under the MIT License - see the [LICENSE](LICENSE) 
 #### 从源码构建
 ```bash
 # 克隆仓库
-git clone https://github.com/xuzhili835/Sakura-Echo.git
+git clone https://github.com/xuzhili835/MusicPlayer.git
 cd Sakura-Echo
 
 # 安装依赖
