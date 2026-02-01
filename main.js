@@ -115,18 +115,8 @@ class BiliMusicPlayer {
 
         // 处理强制退出
         app.on('will-quit', async (event) => {
-            if (this.database && this.database.isInitialized) {
-                event.preventDefault();
-                
-                try {
-                    await this.database.close();
-                    console.log('应用正常退出');
-                    setTimeout(() => process.exit(0), 1000); // 给予1秒时间完成清理
-                } catch (error) {
-                    console.error('退出时清理失败:', error);
-                    process.exit(1);
-                }
-            }
+            // 注意：数据库已在 cleanup() 中关闭，这里不做额外操作
+            console.log('应用正在退出...');
         });
     }
     

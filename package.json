@@ -4,7 +4,7 @@
   "description": "Sakura Echo - 声织四季，瓣落成音",
   "main": "main.js",
   "scripts": {
-    "dev": "electron .",
+    "dev": "chcp 65001 >nul 2>&1 && electron .",
     "start": "electron .",
     "build": "electron-builder --win",
     "dist": "npm run build",
@@ -58,9 +58,6 @@
       "!**/{npm-debug.log,yarn.lock,.yarn-integrity,.yarn-metadata.json}",
       "!temp_downloads/**/*",
       "!bin/**/*"
-    ],
-    "asarUnpack": [
-      "music.db"
     ],
     "compression": "maximum",
     "asar": true,

@@ -907,19 +907,37 @@ class Database {
     // 关闭数据库连接
     async close() {
         return new Promise((resolve, reject) => {
-            if (this.db) {
-                this.db.close((err) => {
-                    if (err) {
+            if (!this.db) {
+                // 数据库未初始化或已关闭
+                resolve();
+                return;
+            }
+
+            // 检查数据库是否已经关闭
+            if (!this.db.open) {
+                console.log('数据库已经关闭，跳过');
+                this.db = null;
+                resolve();
+                return;
+            }
+
+            this.db.close((err) => {
+                if (err) {
+                    // 如果是"数据库已关闭"错误，不视为失败
+                    if (err.code === 'SQLITE_MISUSE' && err.message.includes('closed')) {
+                        console.log('数据库已关闭');
+                        this.db = null;
+                        resolve();
+                    } else {
                         console.error('关闭数据库失败:', err);
                         reject(err);
-                    } else {
-                        console.log('数据库连接已关闭');
-                        resolve();
                     }
-                });
-            } else {
-                resolve();
-            }
+                } else {
+                    console.log('数据库连接已关闭');
+                    this.db = null;
+                    resolve();
+                }
+            });
         });
     }
 }
