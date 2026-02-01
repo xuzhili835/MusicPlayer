@@ -66,11 +66,16 @@
         {
           "target": "nsis",
           "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
         }
       ],
       "icon": "build/converted-image.ico",
       "requestedExecutionLevel": "asInvoker"
     },
+    "compression": "maximum",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,

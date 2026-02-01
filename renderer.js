@@ -1344,14 +1344,28 @@ class MusicPlayer {
     }
 
     // 打开控制台
-    openConsole() {
+    async openConsole() {
+        // 获取版本号
+        let versionText = 'v1.0.0';
+        try {
+            const versionInfo = await electronAPI.app.getVersion();
+            if (versionInfo.success) {
+                versionText = `v${versionInfo.version}`;
+            }
+        } catch (error) {
+            console.error('获取版本号失败:', error);
+        }
+
         // 创建控制台对话框
         const dialog = document.createElement('div');
         dialog.className = 'modal-overlay';
         dialog.innerHTML = `
             <div class="modal-content">
                 <div class="modal-header">
-                    <h3>系统维护控制台</h3>
+                    <div>
+                        <h3>系统维护控制台</h3>
+                        <p style="font-size: 12px; color: #888; margin-top: 4px;">当前版本: ${versionText}</p>
+                    </div>
                     <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">×</button>
                 </div>
                 <div class="modal-body">

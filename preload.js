@@ -10,6 +10,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
         openDevTools: () => ipcRenderer.invoke('window-open-dev-tools')
     },
 
+    // 应用信息
+    app: {
+        getVersion: () => ipcRenderer.invoke('app-get-version')
+    },
+
     // 数据库操作
     database: {
         getSongs: () => ipcRenderer.invoke('database-get-songs'),
