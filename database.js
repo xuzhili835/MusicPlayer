@@ -63,17 +63,28 @@ class Database {
         try {
             // 检查应用目录中是否有现有的数据库文件
             const appDbPath = path.join(__dirname, 'music.db');
-            
+
             if (fs.existsSync(appDbPath)) {
-                // 复制现有数据库到用户数据目录
-                console.log('复制现有数据库到用户数据目录...');
-                fs.copyFileSync(appDbPath, this.dbPath);
-                console.log('数据库复制完成');
+                // 检查文件大小，只复制空模板文件（防止污染）
+                const stats = fs.statSync(appDbPath);
+
+                if (stats.size === 0) {
+                    // 空文件，可以安全复制
+                    console.log('复制初始数据库模板到用户数据目录...');
+                    fs.copyFileSync(appDbPath, this.dbPath);
+                    console.log('数据库模板复制完成');
+                } else {
+                    // 非空文件，跳过复制以避免数据污染
+                    console.warn('⚠️ 检测到非空数据库文件，跳过复制以避免数据污染');
+                    console.warn('   文件路径:', appDbPath);
+                    console.warn('   文件大小:', stats.size, 'bytes');
+                    console.log('将创建新的空数据库文件');
+                }
             } else {
                 console.log('将创建新的数据库文件');
             }
         } catch (error) {
-            console.log('无法复制现有数据库，将创建新的数据库文件:', error.message);
+            console.log('无法复制数据库模板，将创建新的数据库文件:', error.message);
         }
     }
 
