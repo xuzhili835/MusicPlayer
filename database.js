@@ -37,6 +37,15 @@ class Database {
                     throw err;
                 }
                 console.log('数据库连接成功');
+
+                // 启用外键约束，确保数据一致性
+                this.db.run('PRAGMA foreign_keys = ON', (pragmaErr) => {
+                    if (pragmaErr) {
+                        console.error('启用外键约束失败:', pragmaErr);
+                    } else {
+                        console.log('外键约束已启用');
+                    }
+                });
             });
 
             // 先运行数据库迁移
@@ -226,12 +235,27 @@ class Database {
     // 清理无效数据
     async cleanupInvalidData() {
         try {
+            // 开发环境：跳过清理以提高启动速度
+            if (process.env.NODE_ENV === 'development') {
+                console.log('开发环境：跳过无效数据清理');
+                return;
+            }
+
+            // 用户环境：限制清理频率（每周最多一次）
+            const lastCleanup = await this.getSetting('last_cleanup', 0);
+            const daysSinceLastCleanup = (Date.now() - lastCleanup) / (1000 * 60 * 60 * 24);
+
+            if (daysSinceLastCleanup < 7) {
+                console.log(`距离上次清理不足7天（${daysSinceLastCleanup.toFixed(1)}天），跳过`);
+                return;
+            }
+
             console.log('开始清理无效数据...');
-            
+
             // 获取所有歌曲记录
             const songs = await this.query('SELECT id, path, title FROM songs');
             const toDelete = [];
-            
+
             for (const song of songs) {
                 // 检查文件是否存在
                 if (!fs.existsSync(song.path)) {
@@ -239,13 +263,26 @@ class Database {
                     console.log(`发现无效歌曲记录: ${song.title} (文件不存在: ${song.path})`);
                 }
             }
-            
+
             if (toDelete.length > 0) {
                 const placeholders = toDelete.map(() => '?').join(',');
                 await this.run(`DELETE FROM songs WHERE id IN (${placeholders})`, toDelete);
                 console.log(`清理了 ${toDelete.length} 个无效歌曲记录`);
             }
-            
+
+            // 清理无效的播放历史记录（指向不存在歌曲的历史）
+            const deletedHistory = await this.run(`
+                DELETE FROM play_history
+                WHERE song_id NOT IN (SELECT id FROM songs)
+            `);
+
+            if (deletedHistory.changes > 0) {
+                console.log(`清理了 ${deletedHistory.changes} 条无效播放历史记录`);
+            }
+
+            // 更新清理时间
+            await this.setSetting('last_cleanup', Date.now());
+
             console.log('无效数据清理完成');
         } catch (error) {
             console.error('清理无效数据失败:', error);

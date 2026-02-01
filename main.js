@@ -47,10 +47,7 @@ class BiliMusicPlayer {
             
             // 设置工具（检查并下载必要的工具）
             await this.setupTools();
-            
-            // 启动时清理遗留的孤立文件
-            await this.cleanupOrphanedFiles();
-            
+
             this.createMainWindow();
             this.setupIPC();
             
@@ -758,17 +755,6 @@ class BiliMusicPlayer {
         ipcMain.handle('window-show-dev-tools', async () => {
             if (this.mainWindow) {
                 this.mainWindow.webContents.openDevTools();
-            }
-        });
-
-        // 清理功能
-        ipcMain.handle('cleanup-orphaned-files', async () => {
-            try {
-                await this.cleanupOrphanedFiles();
-                return { success: true };
-            } catch (error) {
-                console.error('清理孤立文件失败:', error);
-                return { success: false, error: error.message };
             }
         });
 
