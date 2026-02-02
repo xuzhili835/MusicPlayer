@@ -59,4 +59,7 @@ music.db
 *.temp
 
 # Error logs
-error.log 
+error.log
+
+# 开发日志
+*开发日志.md 

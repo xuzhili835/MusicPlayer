@@ -983,6 +983,12 @@ class BiliMusicPlayer {
                         const songData = await this.extractAudioMetadata(filePath);
                         const songId = await this.database.addSong(songData);
                         songs.push({ ...songData, id: songId });
+
+                        // 自动分析音量（后台进行，不阻塞）
+                        const targetLufs = await this.database.getSetting('volume_target_lufs', -16);
+                        this.analyzeSongVolume(songId, targetLufs).catch(error => {
+                            console.log('音量分析失败（不影响导入）:', error.message);
+                        });
                     } catch (error) {
                         console.error('处理音乐文件失败:', filePath, error);
                     }
@@ -1180,6 +1186,25 @@ class BiliMusicPlayer {
 
         ipcMain.handle('database-delete-setting', async (event, key) => {
             return await this.database.deleteSetting(key);
+        });
+
+        // 音量分析功能
+        ipcMain.handle('volume-analyze-song', async (event, songId, targetLufs = -16) => {
+            return await this.analyzeSongVolume(songId, targetLufs);
+        });
+
+        ipcMain.handle('volume-get-unanalyzed-songs', async () => {
+            return await this.database.getUnanalyzedSongs();
+        });
+
+        ipcMain.handle('volume-get-stats', async () => {
+            const total = await this.database.getTotalSongsCount();
+            const analyzed = await this.database.getAnalyzedSongsCount();
+            return {
+                total: total,
+                analyzed: analyzed,
+                unanalyzed: total - analyzed
+            };
         });
 
         // 文件状态检查
@@ -1868,7 +1893,15 @@ class BiliMusicPlayer {
             };
             
             const songId = await this.database.addSong(songData);
-            
+
+            // 自动分析音量
+            try {
+                const targetLufs = await this.database.getSetting('volume_target_lufs', -16);
+                await this.analyzeSongVolume(songId, targetLufs);
+            } catch (error) {
+                console.log('音量分析失败（不影响下载）:', error.message);
+            }
+
             // 尝试下载歌词
             if (options.downloadLyrics) {
                 try {
@@ -2031,7 +2064,7 @@ class BiliMusicPlayer {
             const metadata = await parseFile(filePath);
             const common = metadata.common || {};
             const format = metadata.format || {};
-            
+
             return {
                 title: common.title || path.basename(filePath, path.extname(filePath)),
                 artist: common.artist || common.albumartist || '',
@@ -2054,6 +2087,112 @@ class BiliMusicPlayer {
                 source_url: null,
                 thumbnail: null,
                 video_path: null
+            };
+        }
+    }
+
+    // 分析歌曲音量（EBU R128）
+    async analyzeSongVolume(songId, targetLufs = -16) {
+        try {
+            // 获取歌曲信息
+            const song = await this.database.getSongById(songId);
+            if (!song) {
+                throw new Error('歌曲不存在');
+            }
+
+            console.log(`开始分析音量: ${song.title} (${song.path})`);
+
+            // 检查文件是否存在
+            if (!fsSync.existsSync(song.path)) {
+                throw new Error('音频文件不存在');
+            }
+
+            // 使用 FFmpeg 的 ebur128 滤镜分析音量
+            const analysisCommand = [
+                'ffmpeg',
+                '-i', song.path,
+                '-filter_complex', 'ebur128',
+                '-f', 'null',
+                '-'
+            ];
+
+            console.log('执行音量分析命令:', analysisCommand.join(' '));
+
+            // FFmpeg 的 ebur128 输出在 stderr，需要捕获 stderr
+            const output = execSync(analysisCommand.join(' ') + ' 2>&1', {
+                encoding: 'utf8',
+                maxBuffer: 50 * 1024 * 1024 // 50MB buffer
+            });
+
+            console.log('FFmpeg 输出长度:', output.length);
+
+            // 解析 FFmpeg 输出，提取 Integrated loudness 值
+            // 格式：
+            // Summary:
+            //   Integrated loudness:
+            //     I:          -6.8 LUFS
+
+            let integratedLoudness = null;
+
+            // 使用更精确的正则表达式匹配 Summary 部分
+            const summaryPattern = /Summary:[\s\S]*?Integrated loudness:[\s\S]*?I:\s+([-\d]+\.?\d*)\s+LUFS/is;
+            const match = output.match(summaryPattern);
+
+            if (match && match[1]) {
+                integratedLoudness = parseFloat(match[1]);
+                console.log('✓ 解析成功:', integratedLoudness, 'LUFS');
+            } else {
+                console.error('❌ 正则匹配失败');
+                console.log('--- 调试信息 ---');
+                console.log('包含 Summary:', output.includes('Summary'));
+                console.log('包含 Integrated loudness:', output.includes('Integrated loudness'));
+                console.log('包含 "I:":', output.includes('I:'));
+
+                // 尝试简单的查找
+                const simpleMatch = output.match(/I:\s+(-?\d+\.?\d*)\s+LUFS/i);
+                if (simpleMatch) {
+                    integratedLoudness = parseFloat(simpleMatch[1]);
+                    console.log('✓ 简单模式成功:', integratedLoudness);
+                }
+            }
+
+            if (integratedLoudness === null || isNaN(integratedLoudness)) {
+                console.error('❌ 无法解析音量分析结果');
+                console.log('--- 输出内容（最后2000字符）---');
+                console.log(output.slice(-2000));
+                console.log('--- 输出结束 ---');
+                return {
+                    success: false,
+                    error: '无法解析音量分析结果',
+                    songId: songId
+                };
+            }
+
+            // 计算增益值（目标响度 - 实际响度）
+            const volumeGain = targetLufs - integratedLoudness;
+
+            console.log(`音量分析完成:`);
+            console.log(`  实际响度: ${integratedLoudness.toFixed(1)} LUFS`);
+            console.log(`  目标响度: ${targetLufs} LUFS`);
+            console.log(`  需要增益: ${volumeGain > 0 ? '+' : ''}${volumeGain.toFixed(1)} dB`);
+
+            // 更新数据库（保存增益值和原始响度）
+            await this.database.updateSongVolumeGain(songId, volumeGain, integratedLoudness);
+
+            return {
+                success: true,
+                songId: songId,
+                integratedLoudness: integratedLoudness,
+                volumeGain: volumeGain,
+                targetLufs: targetLufs
+            };
+
+        } catch (error) {
+            console.error('音量分析失败:', error);
+            return {
+                success: false,
+                error: error.message,
+                songId: songId
             };
         }
     }

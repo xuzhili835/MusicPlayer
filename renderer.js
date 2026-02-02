@@ -11,9 +11,11 @@ class MusicPlayer {
         this.volume = 50;
         this.playMode = 'sequence'; // sequence, reverse, shuffle, single, repeat
         this.currentView = 'all-songs';
+        this.currentPlaylistId = null;
+        this.currentPlaylistName = null;
         this.currentLyrics = null;
         this.lyricsInterval = null;
-        
+
         this.initializePlayer();
     }
 
@@ -148,6 +150,9 @@ class MusicPlayer {
                                 break;
                             case 'refresh-ui-btn':
                                 this.refreshUI();
+                                break;
+                            case 'settings-btn':
+                                this.showSettingsDialog();
                                 break;
                         }
                     }
@@ -420,15 +425,18 @@ class MusicPlayer {
         try {
             this.audio.src = this.currentSong.path;
             this.audio.load();
-            
+
+            // 应用音量补偿
+            await this.applyVolumeCompensation();
+
             await this.audio.play();
-            
+
             this.updateCurrentSongInfo();
             this.updateCurrentSongHighlight();
-            
+
             // 加载歌词
             await this.loadLyrics(this.currentSong.title);
-            
+
             logger.info('播放歌曲:', this.currentSong.title);
         } catch (error) {
             logger.error('播放歌曲失败:', error);
@@ -612,6 +620,97 @@ class MusicPlayer {
             this.setVolume(0);
         } else {
             this.setVolume(this.lastVolume || 50);
+        }
+    }
+
+    // 应用音量补偿
+    async applyVolumeCompensation() {
+        if (!this.currentSong || !this.audio) return;
+
+        try {
+            // 检查是否启用音量自动平衡
+            const volumeSyncEnabled = await electronAPI.database.getSetting('volume_sync_enabled', true);
+
+            // 如果未启用音量自动平衡，使用正常音量
+            if (!volumeSyncEnabled) {
+                this.audio.volume = this.volume / 100;
+                return;
+            }
+
+            // 检查歌曲是否有音量增益值
+            if (this.currentSong.volume_gain !== null && this.currentSong.volume_gain !== undefined) {
+                // 计算补偿后的音量
+                const baseVolume = this.volume / 100;
+                const gain = this.currentSong.volume_gain;
+                const compensatedVolume = baseVolume * Math.pow(10, gain / 20);
+
+                // 限制在 0-1 范围内
+                this.audio.volume = Math.max(0, Math.min(1, compensatedVolume));
+            } else {
+                // 没有增益值，使用正常音量
+                this.audio.volume = this.volume / 100;
+            }
+        } catch (error) {
+            // 出错时使用默认音量
+            this.audio.volume = this.volume / 100;
+        }
+    }
+
+    // 同步歌曲音量
+    async analyzeSongVolume(songId) {
+        try {
+            this.showMessage('正在同步音量...', 'info');
+
+            const targetLufs = await electronAPI.database.getSetting('volume_target_lufs', -16);
+            const result = await electronAPI.volume.analyzeSong(songId, targetLufs);
+
+            if (result.success) {
+                this.showMessage(`音量同步完成：${result.volumeGain > 0 ? '+' : ''}${result.volumeGain.toFixed(1)} dB`, 'success');
+                // 智能刷新当前视图
+                await this.refreshCurrentView();
+            } else {
+                this.showMessage(`音量同步失败：${result.error || '未知错误'}`, 'error');
+            }
+        } catch (error) {
+            logger.error('同步音量失败:', error);
+            this.showMessage('音量同步失败', 'error');
+        }
+    }
+
+    // 刷新当前视图（智能刷新）
+    async refreshCurrentView() {
+        try {
+            const currentViewTitle = document.getElementById('current-view-title');
+            const titleText = currentViewTitle ? currentViewTitle.textContent : '';
+
+            switch (this.currentView) {
+                case 'all-songs':
+                    await this.loadMusicLibrary();
+                    break;
+                case 'recent':
+                    await this.loadRecentlyPlayed();
+                    break;
+                default:
+                    // 检查是否是歌单视图
+                    if (this.currentView.startsWith('playlist-') && this.currentPlaylistId) {
+                        await this.switchToPlaylist(this.currentPlaylistId, this.currentPlaylistName || '歌单');
+                    } else if (titleText === '搜索结果') {
+                        // 如果在搜索视图，重新执行搜索
+                        const searchInput = document.getElementById('search-input');
+                        if (searchInput && searchInput.value) {
+                            await this.handleSearch(searchInput.value);
+                        } else {
+                            // 搜索框为空，加载所有歌曲
+                            await this.loadMusicLibrary();
+                        }
+                    } else {
+                        // 默认回退到所有歌曲
+                        await this.loadMusicLibrary();
+                    }
+                    break;
+            }
+        } catch (error) {
+            logger.error('刷新当前视图失败:', error);
         }
     }
 
@@ -1041,26 +1140,27 @@ class MusicPlayer {
         try {
             this.currentView = `playlist-${playlistId}`;
             this.currentPlaylistId = playlistId;
-            
+            this.currentPlaylistName = playlistName;
+
             // 更新导航高亮
             const navItems = document.querySelectorAll('.nav-item');
             navItems.forEach(item => {
                 item.classList.remove('active');
             });
-            
+
             const currentItem = document.querySelector(`[data-playlist-id="${playlistId}"]`);
             if (currentItem) {
                 currentItem.classList.add('active');
             }
-            
+
             // 加载歌单歌曲
             const songs = await electronAPI.database.getPlaylistSongs(playlistId);
             this.playlist = songs;
-            
+
             // 更新界面
             document.getElementById('current-view-title').textContent = playlistName;
             document.getElementById('current-view-count').textContent = `${songs.length} 首歌曲`;
-            
+
             this.renderSongsList();
             
         } catch (error) {
@@ -1885,7 +1985,7 @@ class MusicPlayer {
             <div class="menu-separator"></div>
             <div class="menu-item" data-action="show-in-explorer">在文件夹中显示</div>
             <div class="menu-item" data-action="info">歌曲信息</div>
-            <div class="menu-item" data-action="check-file">检查文件状态</div>
+            <div class="menu-item" data-action="analyze-volume">同步音量</div>
             <div class="menu-separator"></div>
             <div class="menu-item" data-action="delete">删除</div>
         `;
@@ -1948,8 +2048,8 @@ class MusicPlayer {
             case 'info':
                 this.showSongInfo(song);
                 break;
-            case 'check-file':
-                await this.checkFileStatus(song.path);
+            case 'analyze-volume':
+                await this.analyzeSongVolume(song.id);
                 break;
             case 'delete':
                 await this.deleteSong(song.id);
@@ -2182,6 +2282,8 @@ class MusicPlayer {
     }
 
     showSongInfo(song) {
+        const hasVolumeGain = song.volume_gain !== null && song.volume_gain !== undefined;
+
         const dialog = document.createElement('div');
         dialog.className = 'modal-overlay';
         dialog.innerHTML = `
@@ -2193,38 +2295,333 @@ class MusicPlayer {
                 <div class="modal-body">
                     <div class="song-info">
                         <div class="info-item">
-                            <label>标题:</label>
+                            <label>标题</label>
                             <span>${song.title}</span>
                         </div>
                         <div class="info-item">
-                            <label>艺术家:</label>
+                            <label>艺术家</label>
                             <span>${song.artist || '未知'}</span>
                         </div>
                         <div class="info-item">
-                            <label>时长:</label>
+                            <label>时长</label>
                             <span>${utils.formatTime(song.duration || 0)}</span>
                         </div>
                         <div class="info-item">
-                            <label>播放次数:</label>
+                            <label>播放次数</label>
                             <span>${song.play_count || 0}</span>
                         </div>
                         <div class="info-item">
-                            <label>文件路径:</label>
+                            <label>文件路径</label>
                             <span>${song.path}</span>
                         </div>
                         <div class="info-item">
-                            <label>添加时间:</label>
+                            <label>添加时间</label>
                             <span>${new Date(song.added_at).toLocaleString()}</span>
                         </div>
                     </div>
+
+                    ${hasVolumeGain ? `
+                    <div class="info-section">
+                        <div class="info-section-title">
+                            音量同步
+                            <span class="status-indicator status-success" style="margin-left: auto;"></span>
+                            <span class="status-text status-success">已同步</span>
+                        </div>
+                        <div class="volume-details">
+                            <div class="volume-info-row">
+                                <span class="volume-label">原始响度</span>
+                                <span class="volume-value">${song.integrated_loudness ? parseFloat(song.integrated_loudness).toFixed(1) : '未知'} LUFS</span>
+                            </div>
+                            <div class="volume-info-row">
+                                <span class="volume-label">同步后响度</span>
+                                <span class="volume-value">${song.integrated_loudness ? (song.integrated_loudness + song.volume_gain).toFixed(1) : '未知'} LUFS</span>
+                            </div>
+                        </div>
+                    </div>
+                    ` : `
+                    <div class="info-section">
+                        <div class="info-section-title">
+                            音量同步
+                            <span class="status-indicator status-warning" style="margin-left: auto;"></span>
+                            <span class="status-text status-warning">未同步</span>
+                        </div>
+                        <div class="volume-details">
+                            <div class="volume-info-row">
+                                <span class="volume-label">原始响度</span>
+                                <span class="volume-value">未知</span>
+                            </div>
+                        </div>
+                    </div>
+                    `}
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">关闭</button>
                 </div>
             </div>
         `;
-        
+
         document.body.appendChild(dialog);
+    }
+
+    // 显示设置对话框
+    async showSettingsDialog() {
+        try {
+            // 获取当前设置
+            const targetLufs = await electronAPI.database.getSetting('volume_target_lufs', -16);
+            const volumeSyncEnabled = await electronAPI.database.getSetting('volume_sync_enabled', true);
+            const volumeStats = await electronAPI.volume.getStats();
+
+            const dialog = document.createElement('div');
+            dialog.className = 'modal-overlay';
+            dialog.innerHTML = `
+                <div class="modal-content" style="max-width: 600px;">
+                    <div class="modal-header">
+                        <h3>设置</h3>
+                        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="settings-section">
+                            <h4>音量同步</h4>
+                            <div class="settings-group">
+                                <div class="setting-item">
+                                    <div class="checkbox-wrapper">
+                                        <input type="checkbox" id="volume-sync-enabled" ${volumeSyncEnabled ? 'checked' : ''}>
+                                        <label for="volume-sync-enabled">启用音量自动平衡</label>
+                                    </div>
+                                </div>
+
+                                <div class="setting-item">
+                                    <label>目标响度</label>
+                                    <div class="range-container">
+                                        <input type="range" id="volume-target-lufs" min="-24" max="-12" value="${targetLufs}" step="1">
+                                        <span id="volume-target-value">${targetLufs} LUFS</span>
+                                    </div>
+                                    <small>值越大越响亮，-16 为流媒体标准</small>
+                                </div>
+
+                                <div class="setting-stats">
+                                    <div class="stat-item">
+                                        <span class="stat-label">已分析</span>
+                                        <span class="stat-value">${volumeStats.analyzed} 首</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">未分析</span>
+                                        <span class="stat-value">${volumeStats.unanalyzed} 首</span>
+                                    </div>
+                                    <div class="stat-item">
+                                        <span class="stat-label">总计</span>
+                                        <span class="stat-value">${volumeStats.total} 首</span>
+                                    </div>
+                                </div>
+
+                                <div class="setting-actions">
+                                    <button class="btn btn-secondary" id="batch-analyze-btn" ${volumeStats.unanalyzed === 0 ? 'disabled' : ''}>
+                                        批量同步所有歌曲
+                                    </button>
+                                    <button class="btn btn-secondary" id="reset-volume-btn">重置为默认</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-primary" id="save-settings-btn">保存</button>
+                        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">取消</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(dialog);
+
+            // 绑定事件
+            const targetLufsInput = document.getElementById('volume-target-lufs');
+            const targetLufsValue = document.getElementById('volume-target-value');
+
+            // 滑块值变化
+            if (targetLufsInput && targetLufsValue) {
+                targetLufsInput.addEventListener('input', (e) => {
+                    targetLufsValue.textContent = `${e.target.value} LUFS`;
+                });
+            }
+
+            // 保存按钮
+            const saveBtn = document.getElementById('save-settings-btn');
+            if (saveBtn) {
+                saveBtn.addEventListener('click', async () => {
+                    try {
+                        const newTargetLufs = parseInt(targetLufsInput.value);
+                        const newVolumeSyncEnabled = document.getElementById('volume-sync-enabled').checked;
+
+                        await electronAPI.database.setSetting('volume_target_lufs', newTargetLufs);
+                        await electronAPI.database.setSetting('volume_sync_enabled', newVolumeSyncEnabled);
+
+                        this.showMessage('设置已保存', 'success');
+                        dialog.remove();
+                    } catch (error) {
+                        logger.error('保存设置失败:', error);
+                        this.showMessage('保存设置失败', 'error');
+                    }
+                });
+            }
+
+            // 批量分析按钮
+            const batchAnalyzeBtn = document.getElementById('batch-analyze-btn');
+            if (batchAnalyzeBtn && volumeStats.unanalyzed > 0) {
+                batchAnalyzeBtn.addEventListener('click', () => {
+                    dialog.remove();
+                    this.showBatchAnalyzeDialog();
+                });
+            }
+
+            // 重置按钮
+            const resetBtn = document.getElementById('reset-volume-btn');
+            if (resetBtn) {
+                resetBtn.addEventListener('click', async () => {
+                    if (targetLufsInput) {
+                        targetLufsInput.value = -16;
+                        targetLufsValue.textContent = '-16 LUFS';
+                    }
+                });
+            }
+
+        } catch (error) {
+            logger.error('显示设置对话框失败:', error);
+            this.showMessage('无法打开设置', 'error');
+        }
+    }
+
+    // 显示批量分析对话框
+    async showBatchAnalyzeDialog() {
+        try {
+            const unanalyzedSongs = await electronAPI.volume.getUnanalyzedSongs();
+
+            if (!unanalyzedSongs || unanalyzedSongs.length === 0) {
+                this.showMessage('没有需要同步的歌曲', 'info');
+                return;
+            }
+
+            const totalSongs = unanalyzedSongs.length;
+            let currentSongIndex = 0;
+            let isPaused = false;
+            let isCancelled = false;
+            let successCount = 0;
+            let failCount = 0;
+
+            const targetLufs = await electronAPI.database.getSetting('volume_target_lufs', -16);
+
+            const dialog = document.createElement('div');
+            dialog.className = 'modal-overlay';
+            dialog.innerHTML = `
+                <div class="modal-content" style="max-width: 450px;">
+                    <div class="modal-header">
+                        <h3>正在同步歌曲音量</h3>
+                        <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">×</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="batch-analyze-progress">
+                            <div class="progress-bar-container">
+                                <div class="batch-analyze-progress-bar" id="analyze-progress-bar" style="width: 0%"></div>
+                            </div>
+                            <div class="analyze-stats">
+                                <p>当前歌曲：<strong id="current-song-name">准备中...</strong></p>
+                                <p>进度：<span id="analyze-progress-text">0 / ${totalSongs}</span></p>
+                            </div>
+                            <div class="analyze-result-stats">
+                                <div class="stat-item">
+                                    <span class="stat-label">成功</span>
+                                    <span class="stat-value" id="success-count">0</span>
+                                </div>
+                                <div class="stat-item">
+                                    <span class="stat-label">失败</span>
+                                    <span class="stat-value" id="fail-count">0</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" id="pause-analyze-btn">暂停</button>
+                        <button class="btn btn-secondary" id="cancel-analyze-btn">取消</button>
+                    </div>
+                </div>
+            `;
+
+            document.body.appendChild(dialog);
+
+            // 控制按钮
+            const pauseBtn = document.getElementById('pause-analyze-btn');
+            const cancelBtn = document.getElementById('cancel-analyze-btn');
+
+            if (pauseBtn) {
+                pauseBtn.addEventListener('click', () => {
+                    isPaused = !isPaused;
+                    pauseBtn.textContent = isPaused ? '继续' : '暂停';
+                });
+            }
+
+            if (cancelBtn) {
+                cancelBtn.addEventListener('click', () => {
+                    isCancelled = true;
+                    dialog.remove();
+                });
+            }
+
+            // 分析函数
+            const analyzeNext = async () => {
+                if (isCancelled || currentSongIndex >= totalSongs) {
+                    // 完成
+                    setTimeout(() => {
+                        dialog.remove();
+                        this.showMessage(`批量同步完成！成功：${successCount}，失败：${failCount}`, 'success');
+                        // 智能刷新当前视图
+                        this.refreshCurrentView();
+                    }, 500);
+                    return;
+                }
+
+                if (isPaused) {
+                    setTimeout(analyzeNext, 100);
+                    return;
+                }
+
+                const song = unanalyzedSongs[currentSongIndex];
+                const progressPercent = (currentSongIndex / totalSongs) * 100;
+
+                // 更新UI
+                const progressBar = document.getElementById('analyze-progress-bar');
+                const progressText = document.getElementById('analyze-progress-text');
+                const songNameEl = document.getElementById('current-song-name');
+                const successCountEl = document.getElementById('success-count');
+                const failCountEl = document.getElementById('fail-count');
+
+                if (progressBar) progressBar.style.width = `${progressPercent}%`;
+                if (progressText) progressText.textContent = `${currentSongIndex + 1} / ${totalSongs}`;
+                if (songNameEl) songNameEl.textContent = song.title;
+
+                try {
+                    const result = await electronAPI.volume.analyzeSong(song.id, targetLufs);
+                    if (result.success) {
+                        successCount++;
+                        if (successCountEl) successCountEl.textContent = successCount;
+                    } else {
+                        failCount++;
+                        if (failCountEl) failCountEl.textContent = failCount;
+                    }
+                } catch (error) {
+                    logger.error(`同步歌曲失败: ${song.title}`, error);
+                    failCount++;
+                    if (failCountEl) failCountEl.textContent = failCount;
+                }
+
+                currentSongIndex++;
+                setTimeout(analyzeNext, 100); // 短暂延迟，让UI有机会更新
+            };
+
+            // 开始分析
+            analyzeNext();
+
+        } catch (error) {
+            logger.error('批量同步失败:', error);
+            this.showMessage('批量同步失败', 'error');
+        }
     }
 
     async deleteSong(songId) {
@@ -2317,27 +2714,19 @@ class MusicPlayer {
         try {
             logger.info('开始刷新界面');
             this.showMessage('正在刷新界面...', 'info');
-            
-            // 重新加载音乐库
-            await this.loadMusicLibrary();
-            
-            // 更新当前视图计数
-            this.updateCurrentViewCount();
-            
+
             // 重新加载歌单列表
             await this.loadPlaylistsToSidebar();
-            
-            // 如果当前在特定视图，重新加载该视图
-            if (this.currentView !== 'all-songs') {
-                await this.switchView(this.currentView);
-            }
-            
+
+            // 智能刷新当前视图（会正确处理歌单、最近播放、所有歌曲等）
+            await this.refreshCurrentView();
+
             // 重新设置搜索框（确保输入功能正常）
             this.setupSearchInput();
-            
+
             logger.info('界面刷新完成');
             this.showMessage('界面刷新成功', 'success');
-            
+
         } catch (error) {
             logger.error('界面刷新失败:', error);
             this.showMessage('界面刷新失败: ' + error.message, 'error');

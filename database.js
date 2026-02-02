@@ -114,13 +114,35 @@ class Database {
             try {
                 const tableInfo = await this.query("PRAGMA table_info(songs)");
                 const hasAddedAt = tableInfo.some(column => column.name === 'added_at');
-                
-                if (!hasAddedAt) {
+                const hasVolumeGain = tableInfo.some(column => column.name === 'volume_gain');
+                const hasIntegratedLoudness = tableInfo.some(column => column.name === 'integrated_loudness');
+
+                // 添加 volume_gain 字段（如果不存在）
+                if (hasAddedAt && !hasVolumeGain) {
+                    console.log('检测到缺少 volume_gain 字段，正在添加...');
+                    try {
+                        await this.run('ALTER TABLE songs ADD COLUMN volume_gain REAL DEFAULT NULL');
+                        console.log('volume_gain 字段添加成功');
+                    } catch (error) {
+                        console.log('添加 volume_gain 字段失败:', error.message);
+                    }
+                }
+
+                // 添加 integrated_loudness 字段（如果不存在）
+                if (hasAddedAt && !hasIntegratedLoudness) {
+                    console.log('检测到缺少 integrated_loudness 字段，正在添加...');
+                    try {
+                        await this.run('ALTER TABLE songs ADD COLUMN integrated_loudness REAL DEFAULT NULL');
+                        console.log('integrated_loudness 字段添加成功');
+                    } catch (error) {
+                        console.log('添加 integrated_loudness 字段失败:', error.message);
+                    }
+                } else if (!hasAddedAt) {
                     console.log('检测到旧的表结构，重建数据库...');
                     await this.rebuildDatabase();
                     return;
                 }
-                
+
                 console.log('数据库表结构正确，无需迁移');
             } catch (error) {
                 console.log('检查表结构失败，重建数据库:', error.message);
@@ -304,7 +326,9 @@ class Database {
                 thumbnail TEXT,
                 video_path TEXT,
                 play_count INTEGER DEFAULT 0,
-                added_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                volume_gain REAL DEFAULT NULL,
+                integrated_loudness REAL DEFAULT NULL
             );
 
             -- 歌单表
@@ -938,6 +962,59 @@ class Database {
         } catch (error) {
             console.error('删除设置失败:', error);
             throw error;
+        }
+    }
+
+    // ==================== 音量分析 ====================
+
+    // 更新歌曲音量增益值
+    async updateSongVolumeGain(songId, volumeGain, integratedLoudness = null) {
+        try {
+            const result = await this.run(
+                'UPDATE songs SET volume_gain = ?, integrated_loudness = ? WHERE id = ?',
+                [volumeGain, integratedLoudness, songId]
+            );
+            return result.changes > 0;
+        } catch (error) {
+            console.error('更新音量增益失败:', error);
+            throw error;
+        }
+    }
+
+    // 获取未分析的歌曲
+    async getUnanalyzedSongs() {
+        try {
+            const songs = await this.query(
+                'SELECT id, title, artist, path FROM songs WHERE volume_gain IS NULL'
+            );
+            return songs;
+        } catch (error) {
+            console.error('获取未分析歌曲失败:', error);
+            throw error;
+        }
+    }
+
+    // 获取已分析的歌曲数量
+    async getAnalyzedSongsCount() {
+        try {
+            const result = await this.query(
+                'SELECT COUNT(*) as count FROM songs WHERE volume_gain IS NOT NULL'
+            );
+            return result[0].count;
+        } catch (error) {
+            console.error('获取已分析歌曲数量失败:', error);
+            return 0;
+        }
+    }
+
+    // 获取总歌曲数量
+    async getTotalSongsCount() {
+        try {
+            const result = await this.query('SELECT COUNT(*) as count FROM songs');
+            return result[0].count;
+        } catch (error) {
+            console.error('获取总歌曲数量失败:', error);
+            return 0;
         }
     }
 
