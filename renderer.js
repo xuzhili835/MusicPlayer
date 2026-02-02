@@ -2451,10 +2451,28 @@ class MusicPlayer {
                         const newTargetLufs = parseInt(targetLufsInput.value);
                         const newVolumeSyncEnabled = document.getElementById('volume-sync-enabled').checked;
 
+                        // 保存设置
                         await electronAPI.database.setSetting('volume_target_lufs', newTargetLufs);
                         await electronAPI.database.setSetting('volume_sync_enabled', newVolumeSyncEnabled);
 
-                        this.showMessage('设置已保存', 'success');
+                        // 检查目标响度是否改变
+                        if (newTargetLufs !== targetLufs) {
+                            // 目标响度改变了，批量更新已分析歌曲的增益值
+                            this.showMessage('正在更新所有已分析歌曲的音量增益...', 'info');
+
+                            const result = await electronAPI.volume.batchUpdateGains(newTargetLufs);
+
+                            if (result.updated > 0) {
+                                this.showMessage(`设置已保存，已更新 ${result.updated} 首歌曲的音量增益`, 'success');
+                                // 刷新当前视图
+                                await this.refreshCurrentView();
+                            } else {
+                                this.showMessage('设置已保存', 'success');
+                            }
+                        } else {
+                            this.showMessage('设置已保存', 'success');
+                        }
+
                         dialog.remove();
                     } catch (error) {
                         logger.error('保存设置失败:', error);

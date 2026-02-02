@@ -981,6 +981,40 @@ class Database {
         }
     }
 
+    // 批量更新所有已分析歌曲的音量增益值（当目标响度改变时调用）
+    async batchUpdateVolumeGains(newTargetLufs) {
+        try {
+            // 获取所有有原始响度数据的歌曲
+            const songs = await this.query(
+                'SELECT id, integrated_loudness FROM songs WHERE integrated_loudness IS NOT NULL'
+            );
+
+            if (songs.length === 0) {
+                console.log('没有已分析的歌曲需要更新');
+                return { updated: 0 };
+            }
+
+            console.log(`开始批量更新 ${songs.length} 首歌曲的音量增益（目标响度：${newTargetLufs} LUFS）...`);
+
+            // 批量计算并更新
+            let updatedCount = 0;
+            for (const song of songs) {
+                const newGain = newTargetLufs - song.integrated_loudness;
+                await this.run(
+                    'UPDATE songs SET volume_gain = ? WHERE id = ?',
+                    [newGain, song.id]
+                );
+                updatedCount++;
+            }
+
+            console.log(`批量更新完成：${updatedCount} 首歌曲`);
+            return { updated: updatedCount };
+        } catch (error) {
+            console.error('批量更新音量增益失败:', error);
+            throw error;
+        }
+    }
+
     // 获取未分析的歌曲
     async getUnanalyzedSongs() {
         try {

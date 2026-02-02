@@ -98,7 +98,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     volume: {
         analyzeSong: (songId, targetLufs) => ipcRenderer.invoke('volume-analyze-song', songId, targetLufs),
         getUnanalyzedSongs: () => ipcRenderer.invoke('volume-get-unanalyzed-songs'),
-        getStats: () => ipcRenderer.invoke('volume-get-stats')
+        getStats: () => ipcRenderer.invoke('volume-get-stats'),
+        batchUpdateGains: (newTargetLufs) => ipcRenderer.invoke('volume-batch-update-gains', newTargetLufs)
     }
 });
 

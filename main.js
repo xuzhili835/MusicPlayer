@@ -1207,6 +1207,11 @@ class BiliMusicPlayer {
             };
         });
 
+        // 批量更新所有已分析歌曲的音量增益（当目标响度改变时调用）
+        ipcMain.handle('volume-batch-update-gains', async (event, newTargetLufs) => {
+            return await this.database.batchUpdateVolumeGains(newTargetLufs);
+        });
+
         // 文件状态检查
         ipcMain.handle('file-check-songs-status', async () => {
             try {
@@ -2108,18 +2113,13 @@ class BiliMusicPlayer {
             }
 
             // 使用 FFmpeg 的 ebur128 滤镜分析音量
-            const analysisCommand = [
-                'ffmpeg',
-                '-i', song.path,
-                '-filter_complex', 'ebur128',
-                '-f', 'null',
-                '-'
-            ];
+            // 注意：路径需要加引号以正确处理空格和特殊字符
+            const analysisCommand = `ffmpeg -i "${song.path}" -filter_complex ebur128 -f null -`;
 
-            console.log('执行音量分析命令:', analysisCommand.join(' '));
+            console.log('执行音量分析命令:', analysisCommand);
 
             // FFmpeg 的 ebur128 输出在 stderr，需要捕获 stderr
-            const output = execSync(analysisCommand.join(' ') + ' 2>&1', {
+            const output = execSync(analysisCommand + ' 2>&1', {
                 encoding: 'utf8',
                 maxBuffer: 50 * 1024 * 1024 // 50MB buffer
             });
