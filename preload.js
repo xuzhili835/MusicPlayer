@@ -88,10 +88,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
         get: (songTitle) => ipcRenderer.invoke('lyrics-get', songTitle),
         download: (videoUrl, songTitle) => ipcRenderer.invoke('lyrics-download', videoUrl, songTitle),
         save: (songTitle, lrcContent) => ipcRenderer.invoke('lyrics-save', songTitle, lrcContent),
-        
+
         // 桌面歌词窗口
         toggleWindow: () => ipcRenderer.invoke('lyrics-window-toggle'),
         updateWindow: (text) => ipcRenderer.invoke('lyrics-window-update', text)
+    },
+
+    // 音量分析功能
+    volume: {
+        analyzeSong: (songId, targetLufs) => ipcRenderer.invoke('volume-analyze-song', songId, targetLufs),
+        getUnanalyzedSongs: () => ipcRenderer.invoke('volume-get-unanalyzed-songs'),
+        getStats: () => ipcRenderer.invoke('volume-get-stats')
     }
 });
 
