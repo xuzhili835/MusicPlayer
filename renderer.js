@@ -1170,13 +1170,18 @@ class MusicPlayer {
     }
 
     showPlaylistContextMenu(event, playlist) {
+        // 移除现有的右键菜单
+        const existingMenu = document.querySelector('.context-menu');
+        if (existingMenu) {
+            existingMenu.remove();
+        }
+
         // 创建歌单右键菜单
         const contextMenu = document.createElement('div');
         contextMenu.className = 'context-menu playlist-context-menu';
         contextMenu.innerHTML = `
             <ul class="context-menu-list">
                 <li><a href="#" data-action="rename">重命名</a></li>
-                <li><a href="#" data-action="export">导出歌单</a></li>
                 <li class="separator"></li>
                 <li><a href="#" data-action="delete" class="danger">删除歌单</a></li>
             </ul>
@@ -1218,9 +1223,6 @@ class MusicPlayer {
         switch (action) {
             case 'rename':
                 await this.renamePlaylist(playlist);
-                break;
-            case 'export':
-                await this.exportPlaylist(playlist);
                 break;
             case 'delete':
                 await this.deletePlaylist(playlist);
@@ -1777,7 +1779,7 @@ class MusicPlayer {
             if (result.success) {
                 this.showMessage('下载完成: ' + result.song.title, 'success');
                 this.hideDownloadDialog();
-                await this.loadMusicLibrary();
+                await this.refreshCurrentView();
             }
         } catch (error) {
             logger.error('下载失败:', error);
@@ -1959,21 +1961,58 @@ class MusicPlayer {
         electronAPI.lyrics.toggleWindow();
     }
 
+    // 智能定位右键菜单（防止超出窗口）
+    positionContextMenu(menu, x, y) {
+        // 先添加到 DOM 以获取实际尺寸
+        document.body.appendChild(menu);
+
+        const menuRect = menu.getBoundingClientRect();
+        const windowWidth = window.innerWidth;
+        const windowHeight = window.innerHeight;
+
+        // 调整位置
+        let finalX = x;
+        let finalY = y;
+
+        // 检查右边界
+        if (x + menuRect.width > windowWidth) {
+            finalX = windowWidth - menuRect.width - 8;
+        }
+
+        // 检查下边界
+        if (y + menuRect.height > windowHeight) {
+            finalY = windowHeight - menuRect.height - 8;
+        }
+
+        // 检查左边界
+        if (finalX < 8) {
+            finalX = 8;
+        }
+
+        // 检查上边界
+        if (finalY < 8) {
+            finalY = 8;
+        }
+
+        menu.style.left = `${finalX}px`;
+        menu.style.top = `${finalY}px`;
+    }
+
     // 右键菜单
     showContextMenu(event, songItem) {
         event.preventDefault();
-        
+
         const songId = parseInt(songItem.dataset.id);
         const song = this.playlist.find(s => s.id === songId);
-        
+
         if (!song) return;
-        
+
         // 移除现有的右键菜单
         const existingMenu = document.querySelector('.context-menu');
         if (existingMenu) {
             existingMenu.remove();
         }
-        
+
         // 创建右键菜单
         const menu = document.createElement('div');
         menu.className = 'context-menu';
@@ -1989,12 +2028,9 @@ class MusicPlayer {
             <div class="menu-separator"></div>
             <div class="menu-item" data-action="delete">删除</div>
         `;
-        
-        // 设置菜单位置
-        menu.style.left = `${event.pageX}px`;
-        menu.style.top = `${event.pageY}px`;
-        
-        document.body.appendChild(menu);
+
+        // 智能定位菜单
+        this.positionContextMenu(menu, event.pageX, event.pageY);
         
         // 设置当前选中的歌曲
         this.contextMenuSong = song;

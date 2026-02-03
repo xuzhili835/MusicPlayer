@@ -1,6 +1,6 @@
 {
   "name": "sakura-echo",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Sakura Echo - 声织四季，瓣落成音",
   "main": "main.js",
   "scripts": {
