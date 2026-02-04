@@ -68,12 +68,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     download: {
         bilibiliVideo: (url, options) => ipcRenderer.invoke('download-bilibili-video', url, options),
         getVideoInfo: (url) => ipcRenderer.invoke('download-get-video-info', url),
-        
+
         // 监听下载进度
         onProgress: (callback) => {
             const subscription = (event, data) => callback(data);
             ipcRenderer.on('download-progress', subscription);
             return () => ipcRenderer.removeListener('download-progress', subscription);
+        },
+
+        // 监听阶段进度
+        onStageProgress: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('download-stage-progress', subscription);
+            return () => ipcRenderer.removeListener('download-stage-progress', subscription);
         }
     },
     

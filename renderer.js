@@ -1437,7 +1437,8 @@ class MusicPlayer {
             const songs = await electronAPI.file.selectMusic();
             if (songs.length > 0) {
                 this.showMessage(`成功添加 ${songs.length} 首歌曲`, 'success');
-                await this.loadMusicLibrary();
+                // 使用 refreshCurrentView() 保持当前视图
+                await this.refreshCurrentView();
             }
         } catch (error) {
             logger.error('添加本地音乐失败:', error);
@@ -1751,8 +1752,7 @@ class MusicPlayer {
 
     async startDownload() {
         const urlInput = document.getElementById('download-url');
-        const lyricsCheckbox = document.getElementById('download-lyrics');
-        
+
         if (!urlInput || !urlInput.value.trim()) {
             this.showMessage('请输入视频链接', 'warning');
             return;
@@ -1761,29 +1761,34 @@ class MusicPlayer {
         const inputText = urlInput.value.trim();
         // 智能提取B站链接
         const url = utils.extractBilibiliUrl(inputText);
-        
+
         if (!url) {
             this.showMessage('未找到有效的链接', 'warning');
             return;
         }
 
-        const downloadLyrics = lyricsCheckbox ? lyricsCheckbox.checked : false;
-
         try {
             this.showDownloadProgress();
-            
+
             const result = await electronAPI.download.bilibiliVideo(url, {
-                downloadLyrics: downloadLyrics
+                downloadLyrics: true  // 默认下载歌词
             });
-            
+
             if (result.success) {
-                this.showMessage('下载完成: ' + result.song.title, 'success');
+                this.showMessage('下载完成', 'success');
                 this.hideDownloadDialog();
                 await this.refreshCurrentView();
             }
         } catch (error) {
             logger.error('下载失败:', error);
-            this.showMessage('下载失败: ' + error.message, 'error');
+
+            // 简化错误消息
+            let message = error.message;
+            if (error.message.includes('歌曲已存在于音乐库')) {
+                message = '歌曲已存在于音乐库';
+            }
+
+            this.showMessage(message, 'error');
         } finally {
             this.hideDownloadProgress();
         }
@@ -1793,75 +1798,101 @@ class MusicPlayer {
         const progress = document.getElementById('download-progress');
         const startBtn = document.getElementById('download-start-btn');
         const status = document.getElementById('download-status');
-        const percentage = document.getElementById('download-percentage');
-        const progressFilled = document.getElementById('download-progress-filled');
-        
+
         if (progress) progress.style.display = 'block';
         if (startBtn) startBtn.disabled = true;
-        
+
         // 重置进度显示
         if (status) status.textContent = '准备下载...';
-        if (percentage) percentage.textContent = '0%';
-        if (progressFilled) progressFilled.style.width = '0%';
+
+        // 隐藏分数徽章
+        const stageBadge = document.getElementById('download-stage');
+        if (stageBadge) stageBadge.style.display = 'none';
 
         // 监听下载进度
         this.downloadProgressUnsubscribe = electronAPI.download.onProgress((data) => {
             this.updateDownloadProgress(data);
+        });
+
+        // 监听阶段进度
+        this.stageProgressUnsubscribe = electronAPI.download.onStageProgress((data) => {
+            this.updateStageProgress(data);
         });
     }
 
     hideDownloadProgress() {
         const progress = document.getElementById('download-progress');
         const startBtn = document.getElementById('download-start-btn');
-        
+        const stageBadge = document.getElementById('download-stage');
+
         if (progress) progress.style.display = 'none';
         if (startBtn) startBtn.disabled = false;
+        if (stageBadge) stageBadge.style.display = 'none';
 
         if (this.downloadProgressUnsubscribe) {
             this.downloadProgressUnsubscribe();
             this.downloadProgressUnsubscribe = null;
         }
+
+        if (this.stageProgressUnsubscribe) {
+            this.stageProgressUnsubscribe();
+            this.stageProgressUnsubscribe = null;
+        }
+
+        this.currentDownloadStage = null;
+        this.totalDownloadStages = 0;
     }
 
     updateDownloadProgress(data) {
         const status = document.getElementById('download-status');
-        const percentage = document.getElementById('download-percentage');
-        const progressFilled = document.getElementById('download-progress-filled');
-        
+        const stageBadge = document.getElementById('download-stage');
+
+        // 如果有阶段信息，显示分数徽章
+        if (this.currentDownloadStage && this.totalDownloadStages) {
+            if (stageBadge) {
+                stageBadge.textContent = `${this.currentDownloadStage}/${this.totalDownloadStages}`;
+                stageBadge.style.display = 'inline-flex';
+            }
+        }
+
         if (data.type === 'stdout') {
             const output = data.data;
-            
+
             // 解析 yt-dlp 的进度输出
-            // 匹配进度百分比 (例如: "[download]  45.2% of 3.45MiB at 1.23MiB/s ETA 00:02")
             const progressMatch = output.match(/\[download\]\s+(\d+\.?\d*)%/);
             if (progressMatch) {
-                const percent = parseFloat(progressMatch[1]);
-                
                 if (status) {
-                    status.textContent = `下载中... ${percent.toFixed(1)}%`;
-                }
-                
-                if (percentage) {
-                    percentage.textContent = `${percent.toFixed(1)}%`;
-                }
-                
-                if (progressFilled) {
-                    progressFilled.style.width = `${percent}%`;
+                    status.textContent = `正在下载视频文件...`;
                 }
             }
-            
+
             // 检查是否包含其他状态信息
             if (output.includes('[download] Destination:')) {
-                if (status) status.textContent = '准备下载...';
+                if (status) status.textContent = `准备下载...`;
             } else if (output.includes('[ffmpeg]') || output.includes('Post-process')) {
-                if (status) status.textContent = '处理音频文件...';
-                if (percentage) percentage.textContent = '处理中';
-                if (progressFilled) progressFilled.style.width = '95%';
+                if (status) status.textContent = `正在转换为 MP3 格式...`;
             } else if (output.includes('Deleting original file')) {
-                if (status) status.textContent = '清理临时文件...';
-                if (percentage) percentage.textContent = '99%';
-                if (progressFilled) progressFilled.style.width = '99%';
+                if (status) status.textContent = `正在清理临时文件...`;
             }
+        }
+    }
+
+    updateStageProgress(data) {
+        // 保存阶段信息
+        this.currentDownloadStage = data.stage;
+        this.totalDownloadStages = data.totalStages;
+
+        const status = document.getElementById('download-status');
+        const stageBadge = document.getElementById('download-stage');
+
+        if (status) {
+            status.textContent = `${data.description}`;
+        }
+
+        // 更新分数徽章
+        if (stageBadge) {
+            stageBadge.textContent = `${data.stage}/${data.totalStages}`;
+            stageBadge.style.display = 'inline-flex';
         }
     }
 

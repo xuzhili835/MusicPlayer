@@ -731,8 +731,22 @@ body {
 .progress-info {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     margin-bottom: 10px;
     font-size: 14px;
+}
+
+/* 下载阶段分数样式 */
+.download-stage-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 50px;
+    padding: 4px 8px;
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
 }
 
 /* 右键菜单 */

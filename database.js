@@ -452,6 +452,17 @@ class Database {
         }
     }
 
+    // 根据source_url获取歌曲（用于检测重复下载）
+    async getSongByUrl(sourceUrl) {
+        try {
+            const songs = await this.query('SELECT * FROM songs WHERE source_url = ?', [sourceUrl]);
+            return songs[0] || null;
+        } catch (error) {
+            console.error('根据URL获取歌曲失败:', error);
+            throw error;
+        }
+    }
+
     // 更新歌曲信息
     async updateSong(id, updates) {
         try {

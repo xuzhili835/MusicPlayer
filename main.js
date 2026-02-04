@@ -1832,14 +1832,37 @@ class BiliMusicPlayer {
     async downloadBilibiliVideo(url, options = {}) {
         try {
             console.log('开始下载视频:', url);
-            
+
+            // 定义总阶段数
+            const totalStages = 5;
+            let currentStage = 0;
+
+            const sendStage = (description, isComplete = false) => {
+                currentStage++;
+                this.mainWindow.webContents.send('download-stage-progress', {
+                    stage: currentStage,
+                    totalStages: totalStages,
+                    description,
+                    isComplete
+                });
+            };
+
+            // 阶段 1: 下载视频
+            sendStage('正在下载视频文件...');
+
             // 获取视频信息
             const videoInfo = await this.getVideoInfo(url);
             const cleanTitle = this.cleanFileName(videoInfo.title);
-            
+
+            // 检测是否已下载过（通过source_url）
+            const existingSong = await this.database.getSongByUrl(url);
+            if (existingSong) {
+                throw new Error('歌曲已存在于音乐库');
+            }
+
             // 临时文件路径
             const tempAudioPath = path.join(this.tempDir, `${cleanTitle}_temp.%(ext)s`);
-            
+
             // 下载最好质量的音频
             const downloadCommand = [
                 'yt-dlp',
@@ -1850,33 +1873,37 @@ class BiliMusicPlayer {
                 '--no-playlist',
                 url
             ];
-            
+
             // 执行下载
             await this.executeCommand(downloadCommand);
-            
+
             // 查找下载的文件
             const files = await fs.readdir(this.tempDir);
-            const downloadedFile = files.find(file => 
-                file.includes(cleanTitle) && file.includes('_temp') && 
+            const downloadedFile = files.find(file =>
+                file.includes(cleanTitle) && file.includes('_temp') &&
                 (file.endsWith('.mp3') || file.endsWith('.m4a') || file.endsWith('.webm'))
             );
-            
+
             if (!downloadedFile) {
                 throw new Error('下载的文件未找到');
             }
-            
+
             const tempFilePath = path.join(this.tempDir, downloadedFile);
-            
-            // 转换为MP3
+
+            // 阶段 2: 转换为MP3
+            sendStage('正在转换为 MP3 格式...');
             const finalPath = await this.convertToMP3(tempFilePath, cleanTitle);
-            
+
+            // 阶段 3: 同步音量
+            sendStage('正在同步音量...');
+
             // 清理临时文件
             try {
                 await fs.unlink(tempFilePath);
             } catch (error) {
                 console.log('清理临时文件失败:', error);
             }
-            
+
             // 下载并保存缩略图
             let localThumbnailPath = null;
             if (videoInfo.thumbnail) {
@@ -1886,7 +1913,7 @@ class BiliMusicPlayer {
                     console.warn('下载缩略图失败:', error);
                 }
             }
-            
+
             // 添加到数据库
             const songData = {
                 title: videoInfo.title,
@@ -1896,37 +1923,61 @@ class BiliMusicPlayer {
                 source_url: url,
                 thumbnail: localThumbnailPath || videoInfo.thumbnail
             };
-            
+
             const songId = await this.database.addSong(songData);
 
-            // 自动分析音量
+            // 自动同步音量
             try {
                 const targetLufs = await this.database.getSetting('volume_target_lufs', -16);
                 await this.analyzeSongVolume(songId, targetLufs);
             } catch (error) {
-                console.log('音量分析失败（不影响下载）:', error.message);
+                console.log('音量同步失败（不影响下载）:', error.message);
             }
 
+            // 阶段 4: 下载歌词
+            sendStage('正在下载歌词...');
             // 尝试下载歌词
             if (options.downloadLyrics) {
                 try {
-                    await this.lyricsManager.downloadLyrics(url, videoInfo.title);
+                    const result = await this.lyricsManager.downloadLyrics(url, videoInfo.title);
+                    if (!result) {
+                        // 未找到歌词，显示提示并短暂延迟
+                        this.mainWindow.webContents.send('download-stage-progress', {
+                            stage: 4,
+                            totalStages: totalStages,
+                            description: '未找到歌词',
+                            isComplete: false
+                        });
+                        // 延迟500ms让用户看到
+                        await new Promise(resolve => setTimeout(resolve, 500));
+                    }
                 } catch (error) {
                     console.log('下载歌词失败:', error);
+                    // 下载出错，显示提示并短暂延迟
+                    this.mainWindow.webContents.send('download-stage-progress', {
+                        stage: 4,
+                        totalStages: totalStages,
+                        description: '未找到歌词',
+                        isComplete: false
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 500));
                 }
             }
-            
+
+            // 阶段 5: 完成
+            sendStage('下载完成！', true);
+
             return {
                 success: true,
                 song: { ...songData, id: songId }
             };
-            
+
         } catch (error) {
             console.error('下载视频失败:', error);
-            
+
             // 提供用户友好的错误信息
             let errorMessage = '下载失败：';
-            
+
             if (error.message.includes('ffmpeg')) {
                 errorMessage += 'ffmpeg工具不可用。请打开"检查控制台"并点击"强制重新下载工具"按钮，然后重试。';
             } else if (error.message.includes('yt-dlp')) {
@@ -1936,7 +1987,7 @@ class BiliMusicPlayer {
             } else {
                 errorMessage += error.message;
             }
-            
+
             throw new Error(errorMessage);
         }
     }
