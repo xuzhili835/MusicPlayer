@@ -142,9 +142,6 @@ class MusicPlayer {
                             case 'add-files-btn':
                                 this.selectLocalFiles();
                                 break;
-                            case 'console-btn':
-                                this.openConsole();
-                                break;
                             case 'lyrics-window-btn':
                                 this.toggleLyricsWindow();
                                 break;
@@ -1446,256 +1443,6 @@ class MusicPlayer {
         }
     }
 
-    // 打开控制台
-    async openConsole() {
-        // 获取版本号
-        let versionText = 'v1.0.0';
-        try {
-            const versionInfo = await electronAPI.app.getVersion();
-            if (versionInfo.success) {
-                versionText = `v${versionInfo.version}`;
-            }
-        } catch (error) {
-            console.error('获取版本号失败:', error);
-        }
-
-        // 创建控制台对话框
-        const dialog = document.createElement('div');
-        dialog.className = 'modal-overlay';
-        dialog.innerHTML = `
-            <div class="modal-content">
-                <div class="modal-header">
-                    <div>
-                        <h3>系统维护控制台</h3>
-                        <p style="font-size: 12px; color: #888; margin-top: 4px;">当前版本: ${versionText}</p>
-                    </div>
-                    <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">×</button>
-                </div>
-                <div class="modal-body">
-                    <div class="console-actions">
-                        <button id="refresh-ui-btn" class="btn btn-success">刷新界面</button>
-                        <button id="check-songs-btn" class="btn btn-primary">检查歌曲文件状态</button>
-                        <button id="clean-missing-btn" class="btn btn-warning">清理缺失文件</button>
-                        <button id="check-ui-btn" class="btn btn-info">检查UI状态</button>
-                        <button id="reset-search-btn" class="btn btn-warning">重置搜索框</button>
-                        <button id="diagnose-tools-btn" class="btn btn-info">诊断工具状态</button>
-                        <button id="force-download-btn" class="btn btn-warning">强制重新下载工具</button>
-                        <button id="open-devtools-btn" class="btn btn-secondary">打开开发者工具</button>
-                    </div>
-                    <div id="console-output" class="console-output"></div>
-                </div>
-            </div>
-        `;
-        
-        document.body.appendChild(dialog);
-        
-        // 绑定事件
-        const refreshUIBtn = dialog.querySelector('#refresh-ui-btn');
-        const checkSongsBtn = dialog.querySelector('#check-songs-btn');
-        const cleanMissingBtn = dialog.querySelector('#clean-missing-btn');
-        const checkUIBtn = dialog.querySelector('#check-ui-btn');
-        const resetSearchBtn = dialog.querySelector('#reset-search-btn');
-        const diagnoseToolsBtn = dialog.querySelector('#diagnose-tools-btn');
-        const forceDownloadBtn = dialog.querySelector('#force-download-btn');
-        const openDevToolsBtn = dialog.querySelector('#open-devtools-btn');
-        const output = dialog.querySelector('#console-output');
-        
-        refreshUIBtn.addEventListener('click', async () => {
-            output.innerHTML = '<p>正在刷新界面...</p>';
-            try {
-                await this.refreshUI();
-                output.innerHTML = '<p style="color: green;">✅ 界面刷新成功！</p>';
-            } catch (error) {
-                output.innerHTML = `<p style="color: red;">❌ 界面刷新失败: ${error.message}</p>`;
-            }
-        });
-        
-        checkSongsBtn.addEventListener('click', async () => {
-            try {
-                output.innerHTML = '<p>正在检查歌曲文件状态...</p>';
-                const missingFiles = await electronAPI.file.checkSongsStatus();
-                
-                if (missingFiles.length === 0) {
-                    output.innerHTML = '<p style="color: green;">✅ 所有歌曲文件都存在！</p>';
-                } else {
-                    let html = `<p style="color: orange;">⚠️ 发现 ${missingFiles.length} 个缺失文件:</p><ul>`;
-                    missingFiles.forEach(file => {
-                        html += `<li>${file.title} - ${file.path}</li>`;
-                    });
-                    html += '</ul>';
-                    output.innerHTML = html;
-                }
-            } catch (error) {
-                output.innerHTML = `<p style="color: red;">❌ 检查失败: ${error.message}</p>`;
-            }
-        });
-        
-        cleanMissingBtn.addEventListener('click', async () => {
-            if (confirm('确定要清理所有缺失的文件记录吗？这将从数据库中移除文件不存在的歌曲记录。')) {
-                try {
-                    output.innerHTML = '<p>正在清理缺失文件...</p>';
-                    const result = await electronAPI.file.cleanMissingSongs();
-                    
-                    output.innerHTML = `<p style="color: green;">✅ 清理完成！共清理了 ${result.cleanedCount} 个缺失文件记录。</p>`;
-                    
-                    // 刷新音乐库
-                    await this.loadMusicLibrary();
-                    await this.loadPlaylistsToSidebar();
-                } catch (error) {
-                    output.innerHTML = `<p style="color: red;">❌ 清理失败: ${error.message}</p>`;
-                }
-            }
-        });
-        
-        openDevToolsBtn.addEventListener('click', () => {
-            if (electronAPI.window?.openDevTools) {
-                electronAPI.window.openDevTools();
-                this.showMessage('开发者工具已打开', 'info');
-            } else {
-                this.showMessage('无法打开开发者工具', 'error');
-            }
-        });
-
-        checkUIBtn.addEventListener('click', () => {
-            try {
-                const searchInput = document.getElementById('search-input');
-                const audioPlayer = document.getElementById('audio-player');
-                
-                let html = '<h4>UI状态检查结果:</h4>';
-                
-                // 检查搜索框
-                if (searchInput) {
-                    html += `<p><strong>搜索框:</strong> ✅ 存在</p>`;
-                    html += `<p>- 可见性: ${searchInput.style.display !== 'none' ? '✅ 可见' : '❌ 隐藏'}</p>`;
-                    html += `<p>- 是否禁用: ${searchInput.disabled ? '❌ 禁用' : '✅ 启用'}</p>`;
-                    html += `<p>- tabIndex: ${searchInput.tabIndex}</p>`;
-                    html += `<p>- 当前焦点: ${document.activeElement === searchInput ? '✅ 有焦点' : '❌ 无焦点'}</p>`;
-                    html += `<p>- 事件监听器: ${searchInput.onkeyup || searchInput.oninput ? '✅ 已绑定' : '❌ 未绑定'}</p>`;
-                } else {
-                    html += `<p><strong>搜索框:</strong> ❌ 不存在</p>`;
-                }
-                
-                // 检查音频播放器
-                if (audioPlayer) {
-                    html += `<p><strong>音频播放器:</strong> ✅ 存在</p>`;
-                    html += `<p>- 状态: ${audioPlayer.readyState}</p>`;
-                } else {
-                    html += `<p><strong>音频播放器:</strong> ❌ 不存在</p>`;
-                }
-                
-                // 检查播放器状态
-                html += `<p><strong>播放器状态:</strong></p>`;
-                html += `<p>- 当前歌曲: ${this.currentSong ? this.currentSong.title : '无'}</p>`;
-                html += `<p>- 播放列表长度: ${this.playlist.length}</p>`;
-                html += `<p>- 是否在播放: ${this.isPlaying ? '✅ 是' : '❌ 否'}</p>`;
-                
-                output.innerHTML = html;
-            } catch (error) {
-                output.innerHTML = `<p style="color: red;">❌ UI状态检查失败: ${error.message}</p>`;
-            }
-        });
-        
-        resetSearchBtn.addEventListener('click', () => {
-            try {
-                output.innerHTML = '<p>正在重置搜索框...</p>';
-                
-                // 强制重新设置搜索框
-                if (this.setupSearchInput()) {
-                    output.innerHTML = '<p style="color: green;">✅ 搜索框重置成功！请尝试点击搜索框输入。</p>';
-                } else {
-                    output.innerHTML = '<p style="color: red;">❌ 搜索框重置失败，元素未找到。</p>';
-                }
-            } catch (error) {
-                output.innerHTML = `<p style="color: red;">❌ 搜索框重置失败: ${error.message}</p>`;
-            }
-        });
-        
-        diagnoseToolsBtn.addEventListener('click', async () => {
-            try {
-                output.innerHTML = '<p>正在诊断工具状态...</p>';
-                
-                const tools = ['yt-dlp', 'ffmpeg'];
-                let html = '<h4>工具诊断结果:</h4>';
-                
-                for (const tool of tools) {
-                    const diagnosis = await electronAPI.tools.diagnose(tool);
-                    
-                    html += `<div style="margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">`;
-                    html += `<h5>${tool.toUpperCase()}</h5>`;
-                    html += `<p><strong>工具路径:</strong> ${diagnosis.toolPath || '未知'}</p>`;
-                    html += `<p><strong>平台:</strong> ${diagnosis.platform}</p>`;
-                    html += `<p><strong>bin目录存在:</strong> ${diagnosis.binDirExists ? '✅ 是' : '❌ 否'}</p>`;
-                    html += `<p><strong>文件存在:</strong> ${diagnosis.fileExists ? '✅ 是' : '❌ 否'}</p>`;
-                    
-                    if (diagnosis.fileExists) {
-                        html += `<p><strong>文件大小:</strong> ${diagnosis.fileSize} 字节</p>`;
-                        html += `<p><strong>执行权限:</strong> ${diagnosis.hasPermissions ? '✅ 有' : '❌ 无'}</p>`;
-                    }
-                    
-                    html += `<p><strong>系统工具可用:</strong> ${diagnosis.systemToolAvailable ? '✅ 是' : '❌ 否'}</p>`;
-                    
-                    if (diagnosis.issues.length > 0) {
-                        html += `<p><strong>问题:</strong></p><ul>`;
-                        diagnosis.issues.forEach(issue => {
-                            html += `<li style="color: red;">${issue}</li>`;
-                        });
-                        html += `</ul>`;
-                    }
-                    
-                    if (diagnosis.recommendations.length > 0) {
-                        html += `<p><strong>建议:</strong></p><ul>`;
-                        diagnosis.recommendations.forEach(rec => {
-                            html += `<li style="color: blue;">${rec}</li>`;
-                        });
-                        html += `</ul>`;
-                    }
-                    
-                    html += `</div>`;
-                }
-                
-                output.innerHTML = html;
-            } catch (error) {
-                output.innerHTML = `<p style="color: red;">❌ 诊断失败: ${error.message}</p>`;
-            }
-        });
-        
-        forceDownloadBtn.addEventListener('click', async () => {
-            try {
-                output.innerHTML = '<p>正在强制重新下载工具...</p>';
-                
-                const tools = ['yt-dlp', 'ffmpeg'];
-                let html = '<h4>强制重新下载结果:</h4>';
-                
-                for (const tool of tools) {
-                    try {
-                        html += `<p>正在下载 ${tool}...</p>`;
-                        output.innerHTML = html;
-                        
-                        const result = await electronAPI.tools.forceDownload(tool);
-                        
-                        if (result.success) {
-                            html += `<p style="color: green;">✅ ${tool} 重新下载成功</p>`;
-                        } else {
-                            html += `<p style="color: red;">❌ ${tool} 重新下载失败: ${result.message}</p>`;
-                        }
-                    } catch (error) {
-                        html += `<p style="color: red;">❌ ${tool} 重新下载失败: ${error.message}</p>`;
-                    }
-                    
-                    output.innerHTML = html;
-                }
-                
-                html += '<p><strong>下载完成！请重试您的操作。</strong></p>';
-                output.innerHTML = html;
-                
-            } catch (error) {
-                output.innerHTML = `<p style="color: red;">❌ 强制重新下载失败: ${error.message}</p>`;
-            }
-        });
-    }
-
-
-
     // 下载功能
     showDownloadDialog() {
         const dialog = document.getElementById('download-dialog');
@@ -2438,68 +2185,130 @@ class MusicPlayer {
             const volumeSyncEnabled = await electronAPI.database.getSetting('volume_sync_enabled', true);
             const volumeStats = await electronAPI.volume.getStats();
 
+            // 获取版本号
+            let versionText = 'v1.0.0';
+            try {
+                const versionInfo = await electronAPI.app.getVersion();
+                if (versionInfo.success) {
+                    versionText = `v${versionInfo.version}`;
+                }
+            } catch (error) {
+                console.error('获取版本号失败:', error);
+            }
+
             const dialog = document.createElement('div');
             dialog.className = 'modal-overlay';
             dialog.innerHTML = `
-                <div class="modal-content" style="max-width: 600px;">
+                <div class="modal-content" style="max-width: 700px;">
                     <div class="modal-header">
                         <h3>设置</h3>
                         <button class="close-btn" onclick="this.closest('.modal-overlay').remove()">×</button>
                     </div>
-                    <div class="modal-body">
-                        <div class="settings-section">
-                            <h4>音量同步</h4>
-                            <div class="settings-group">
-                                <div class="setting-item">
-                                    <div class="checkbox-wrapper">
-                                        <input type="checkbox" id="volume-sync-enabled" ${volumeSyncEnabled ? 'checked' : ''}>
-                                        <label for="volume-sync-enabled">启用音量自动平衡</label>
+                    <div class="modal-body" style="padding: 0;">
+                        <div class="settings-content-wrapper">
+                            <div class="settings-sidebar-nav">
+                                <div class="settings-nav-item active" data-panel="volume-sync">音量同步</div>
+                                <div class="settings-nav-item" data-panel="console">检查控制台</div>
+                            </div>
+                            <div class="settings-content">
+                                <!-- 音量同步面板 -->
+                                <div class="settings-content-panel active" id="panel-volume-sync">
+                                    <div class="settings-section">
+                                        <div class="settings-group">
+                                            <div class="setting-item">
+                                                <div class="checkbox-wrapper">
+                                                    <input type="checkbox" id="volume-sync-enabled" ${volumeSyncEnabled ? 'checked' : ''}>
+                                                    <label for="volume-sync-enabled">启用音量自动平衡</label>
+                                                </div>
+                                            </div>
+
+                                            <div class="setting-item">
+                                                <label>目标响度</label>
+                                                <div class="range-container">
+                                                    <input type="range" id="volume-target-lufs" min="-24" max="-12" value="${targetLufs}" step="1">
+                                                    <span id="volume-target-value">${targetLufs} LUFS</span>
+                                                </div>
+                                                <small>值越大越响亮，-16 为流媒体标准</small>
+                                            </div>
+
+                                            <div class="setting-stats">
+                                                <div class="stat-item">
+                                                    <span class="stat-label">已分析</span>
+                                                    <span class="stat-value">${volumeStats.analyzed} 首</span>
+                                                </div>
+                                                <div class="stat-item">
+                                                    <span class="stat-label">未分析</span>
+                                                    <span class="stat-value">${volumeStats.unanalyzed} 首</span>
+                                                </div>
+                                                <div class="stat-item">
+                                                    <span class="stat-label">总计</span>
+                                                    <span class="stat-value">${volumeStats.total} 首</span>
+                                                </div>
+                                            </div>
+
+                                            <div class="setting-actions">
+                                                <button class="btn btn-secondary" id="batch-analyze-btn" ${volumeStats.unanalyzed === 0 ? 'disabled' : ''}>
+                                                    批量同步所有歌曲
+                                                </button>
+                                                <button class="btn btn-secondary" id="reset-volume-btn">重置为默认</button>
+                                            </div>
+
+                                            <div class="settings-save-section">
+                                                <button class="btn btn-primary" id="save-settings-btn">保存并应用</button>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div class="setting-item">
-                                    <label>目标响度</label>
-                                    <div class="range-container">
-                                        <input type="range" id="volume-target-lufs" min="-24" max="-12" value="${targetLufs}" step="1">
-                                        <span id="volume-target-value">${targetLufs} LUFS</span>
+                                <!-- 检查控制台面板 -->
+                                <div class="settings-content-panel" id="panel-console">
+                                    <div class="console-actions">
+                                        <button id="refresh-ui-btn" class="btn btn-success">刷新界面</button>
+                                        <button id="check-songs-btn" class="btn btn-primary">检查歌曲文件状态</button>
+                                        <button id="clean-missing-btn" class="btn btn-warning">清理缺失文件</button>
+                                        <button id="check-ui-btn" class="btn btn-info">检查UI状态</button>
+                                        <button id="reset-search-btn" class="btn btn-warning">重置搜索框</button>
+                                        <button id="diagnose-tools-btn" class="btn btn-info">诊断工具状态</button>
+                                        <button id="force-download-btn" class="btn btn-warning">强制重新下载工具</button>
+                                        <button id="open-devtools-btn" class="btn btn-secondary">打开开发者工具</button>
                                     </div>
-                                    <small>值越大越响亮，-16 为流媒体标准</small>
-                                </div>
-
-                                <div class="setting-stats">
-                                    <div class="stat-item">
-                                        <span class="stat-label">已分析</span>
-                                        <span class="stat-value">${volumeStats.analyzed} 首</span>
-                                    </div>
-                                    <div class="stat-item">
-                                        <span class="stat-label">未分析</span>
-                                        <span class="stat-value">${volumeStats.unanalyzed} 首</span>
-                                    </div>
-                                    <div class="stat-item">
-                                        <span class="stat-label">总计</span>
-                                        <span class="stat-value">${volumeStats.total} 首</span>
-                                    </div>
-                                </div>
-
-                                <div class="setting-actions">
-                                    <button class="btn btn-secondary" id="batch-analyze-btn" ${volumeStats.unanalyzed === 0 ? 'disabled' : ''}>
-                                        批量同步所有歌曲
-                                    </button>
-                                    <button class="btn btn-secondary" id="reset-volume-btn">重置为默认</button>
+                                    <div id="console-output" class="console-output"></div>
                                 </div>
                             </div>
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button class="btn btn-primary" id="save-settings-btn">保存</button>
-                        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">取消</button>
+                        <span style="font-size: 12px; color: var(--text-muted);">当前版本: ${versionText}</span>
+                        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">关闭</button>
                     </div>
                 </div>
             `;
 
             document.body.appendChild(dialog);
 
-            // 绑定事件
+            // ==================== 侧边导航切换 ====================
+            const navItems = dialog.querySelectorAll('.settings-nav-item');
+            const panels = dialog.querySelectorAll('.settings-content-panel');
+
+            navItems.forEach(item => {
+                item.addEventListener('click', () => {
+                    const targetPanel = item.dataset.panel;
+
+                    // 更新导航状态
+                    navItems.forEach(nav => nav.classList.remove('active'));
+                    item.classList.add('active');
+
+                    // 切换面板
+                    panels.forEach(panel => {
+                        panel.classList.remove('active');
+                        if (panel.id === `panel-${targetPanel}`) {
+                            panel.classList.add('active');
+                        }
+                    });
+                });
+            });
+
+            // ==================== 音量同步事件绑定 ====================
             const targetLufsInput = document.getElementById('volume-target-lufs');
             const targetLufsValue = document.getElementById('volume-target-value');
 
@@ -2510,7 +2319,7 @@ class MusicPlayer {
                 });
             }
 
-            // 保存按钮
+            // 保存并应用按钮
             const saveBtn = document.getElementById('save-settings-btn');
             if (saveBtn) {
                 saveBtn.addEventListener('click', async () => {
@@ -2557,13 +2366,233 @@ class MusicPlayer {
                 });
             }
 
-            // 重置按钮
+            // 重置为默认按钮
             const resetBtn = document.getElementById('reset-volume-btn');
             if (resetBtn) {
                 resetBtn.addEventListener('click', async () => {
                     if (targetLufsInput) {
                         targetLufsInput.value = -16;
                         targetLufsValue.textContent = '-16 LUFS';
+                    }
+                });
+            }
+
+            // ==================== 检查控制台事件绑定 ====================
+            const output = dialog.querySelector('#console-output');
+            const refreshUIBtn = dialog.querySelector('#refresh-ui-btn');
+            const checkSongsBtn = dialog.querySelector('#check-songs-btn');
+            const cleanMissingBtn = dialog.querySelector('#clean-missing-btn');
+            const checkUIBtn = dialog.querySelector('#check-ui-btn');
+            const resetSearchBtn = dialog.querySelector('#reset-search-btn');
+            const diagnoseToolsBtn = dialog.querySelector('#diagnose-tools-btn');
+            const forceDownloadBtn = dialog.querySelector('#force-download-btn');
+            const openDevToolsBtn = dialog.querySelector('#open-devtools-btn');
+
+            if (refreshUIBtn) {
+                refreshUIBtn.addEventListener('click', async () => {
+                    output.innerHTML = '<p>正在刷新界面...</p>';
+                    try {
+                        await this.refreshUI();
+                        output.innerHTML = '<p style="color: green;">✅ 界面刷新成功！</p>';
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">❌ 界面刷新失败: ${error.message}</p>`;
+                    }
+                });
+            }
+
+            if (checkSongsBtn) {
+                checkSongsBtn.addEventListener('click', async () => {
+                    try {
+                        output.innerHTML = '<p>正在检查歌曲文件状态...</p>';
+                        const missingFiles = await electronAPI.file.checkSongsStatus();
+
+                        if (missingFiles.length === 0) {
+                            output.innerHTML = '<p style="color: green;">✅ 所有歌曲文件都存在！</p>';
+                        } else {
+                            let html = `<p style="color: orange;">⚠️ 发现 ${missingFiles.length} 个缺失文件:</p><ul>`;
+                            missingFiles.forEach(file => {
+                                html += `<li>${file.title} - ${file.path}</li>`;
+                            });
+                            html += '</ul>';
+                            output.innerHTML = html;
+                        }
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">❌ 检查失败: ${error.message}</p>`;
+                    }
+                });
+            }
+
+            if (cleanMissingBtn) {
+                cleanMissingBtn.addEventListener('click', async () => {
+                    if (confirm('确定要清理所有缺失的文件记录吗？这将从数据库中移除文件不存在的歌曲记录。')) {
+                        try {
+                            output.innerHTML = '<p>正在清理缺失文件...</p>';
+                            const result = await electronAPI.file.cleanMissingSongs();
+
+                            output.innerHTML = `<p style="color: green;">✅ 清理完成！共清理了 ${result.cleanedCount} 个缺失文件记录。</p>`;
+
+                            // 刷新音乐库
+                            await this.loadMusicLibrary();
+                            await this.loadPlaylistsToSidebar();
+                        } catch (error) {
+                            output.innerHTML = `<p style="color: red;">❌ 清理失败: ${error.message}</p>`;
+                        }
+                    }
+                });
+            }
+
+            if (openDevToolsBtn) {
+                openDevToolsBtn.addEventListener('click', () => {
+                    if (electronAPI.window?.openDevTools) {
+                        electronAPI.window.openDevTools();
+                        this.showMessage('开发者工具已打开', 'info');
+                    } else {
+                        this.showMessage('无法打开开发者工具', 'error');
+                    }
+                });
+            }
+
+            if (checkUIBtn) {
+                checkUIBtn.addEventListener('click', () => {
+                    try {
+                        const searchInput = document.getElementById('search-input');
+                        const audioPlayer = document.getElementById('audio-player');
+
+                        let html = '<h4>UI状态检查结果:</h4>';
+
+                        // 检查搜索框
+                        if (searchInput) {
+                            html += `<p><strong>搜索框:</strong> ✅ 存在</p>`;
+                            html += `<p>- 可见性: ${searchInput.style.display !== 'none' ? '✅ 可见' : '❌ 隐藏'}</p>`;
+                            html += `<p>- 是否禁用: ${searchInput.disabled ? '❌ 禁用' : '✅ 启用'}</p>`;
+                            html += `<p>- tabIndex: ${searchInput.tabIndex}</p>`;
+                            html += `<p>- 当前焦点: ${document.activeElement === searchInput ? '✅ 有焦点' : '❌ 无焦点'}</p>`;
+                            html += `<p>- 事件监听器: ${searchInput.onkeyup || searchInput.oninput ? '✅ 已绑定' : '❌ 未绑定'}</p>`;
+                        } else {
+                            html += `<p><strong>搜索框:</strong> ❌ 不存在</p>`;
+                        }
+
+                        // 检查音频播放器
+                        if (audioPlayer) {
+                            html += `<p><strong>音频播放器:</strong> ✅ 存在</p>`;
+                            html += `<p>- 状态: ${audioPlayer.readyState}</p>`;
+                        } else {
+                            html += `<p><strong>音频播放器:</strong> ❌ 不存在</p>`;
+                        }
+
+                        // 检查播放器状态
+                        html += `<p><strong>播放器状态:</strong></p>`;
+                        html += `<p>- 当前歌曲: ${this.currentSong ? this.currentSong.title : '无'}</p>`;
+                        html += `<p>- 播放列表长度: ${this.playlist.length}</p>`;
+                        html += `<p>- 是否在播放: ${this.isPlaying ? '✅ 是' : '❌ 否'}</p>`;
+
+                        output.innerHTML = html;
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">❌ UI状态检查失败: ${error.message}</p>`;
+                    }
+                });
+            }
+
+            if (resetSearchBtn) {
+                resetSearchBtn.addEventListener('click', () => {
+                    try {
+                        output.innerHTML = '<p>正在重置搜索框...</p>';
+
+                        // 强制重新设置搜索框
+                        if (this.setupSearchInput()) {
+                            output.innerHTML = '<p style="color: green;">✅ 搜索框重置成功！请尝试点击搜索框输入。</p>';
+                        } else {
+                            output.innerHTML = '<p style="color: red;">❌ 搜索框重置失败，元素未找到。</p>';
+                        }
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">❌ 搜索框重置失败: ${error.message}</p>`;
+                    }
+                });
+            }
+
+            if (diagnoseToolsBtn) {
+                diagnoseToolsBtn.addEventListener('click', async () => {
+                    try {
+                        output.innerHTML = '<p>正在诊断工具状态...</p>';
+
+                        const tools = ['yt-dlp', 'ffmpeg'];
+                        let html = '<h4>工具诊断结果:</h4>';
+
+                        for (const tool of tools) {
+                            const diagnosis = await electronAPI.tools.diagnose(tool);
+
+                            html += `<div style="margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">`;
+                            html += `<h5>${tool.toUpperCase()}</h5>`;
+                            html += `<p><strong>工具路径:</strong> ${diagnosis.toolPath || '未知'}</p>`;
+                            html += `<p><strong>平台:</strong> ${diagnosis.platform}</p>`;
+                            html += `<p><strong>bin目录存在:</strong> ${diagnosis.binDirExists ? '✅ 是' : '❌ 否'}</p>`;
+                            html += `<p><strong>文件存在:</strong> ${diagnosis.fileExists ? '✅ 是' : '❌ 否'}</p>`;
+
+                            if (diagnosis.fileExists) {
+                                html += `<p><strong>文件大小:</strong> ${diagnosis.fileSize} 字节</p>`;
+                                html += `<p><strong>执行权限:</strong> ${diagnosis.hasPermissions ? '✅ 有' : '❌ 无'}</p>`;
+                            }
+
+                            html += `<p><strong>系统工具可用:</strong> ${diagnosis.systemToolAvailable ? '✅ 是' : '❌ 否'}</p>`;
+
+                            if (diagnosis.issues.length > 0) {
+                                html += `<p><strong>问题:</strong></p><ul>`;
+                                diagnosis.issues.forEach(issue => {
+                                    html += `<li style="color: red;">${issue}</li>`;
+                                });
+                                html += `</ul>`;
+                            }
+
+                            if (diagnosis.recommendations.length > 0) {
+                                html += `<p><strong>建议:</strong></p><ul>`;
+                                diagnosis.recommendations.forEach(rec => {
+                                    html += `<li style="color: blue;">${rec}</li>`;
+                                });
+                                html += `</ul>`;
+                            }
+
+                            html += `</div>`;
+                        }
+
+                        output.innerHTML = html;
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">❌ 诊断失败: ${error.message}</p>`;
+                    }
+                });
+            }
+
+            if (forceDownloadBtn) {
+                forceDownloadBtn.addEventListener('click', async () => {
+                    try {
+                        output.innerHTML = '<p>正在强制重新下载工具...</p>';
+
+                        const tools = ['yt-dlp', 'ffmpeg'];
+                        let html = '<h4>强制重新下载结果:</h4>';
+
+                        for (const tool of tools) {
+                            try {
+                                html += `<p>正在下载 ${tool}...</p>`;
+                                output.innerHTML = html;
+
+                                const result = await electronAPI.tools.forceDownload(tool);
+
+                                if (result.success) {
+                                    html += `<p style="color: green;">✅ ${tool} 重新下载成功</p>`;
+                                } else {
+                                    html += `<p style="color: red;">❌ ${tool} 重新下载失败: ${result.message}</p>`;
+                                }
+                            } catch (error) {
+                                html += `<p style="color: red;">❌ ${tool} 重新下载失败: ${error.message}</p>`;
+                            }
+
+                            output.innerHTML = html;
+                        }
+
+                        html += '<p><strong>下载完成！请重试您的操作。</strong></p>';
+                        output.innerHTML = html;
+
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">❌ 强制重新下载失败: ${error.message}</p>`;
                     }
                 });
             }
