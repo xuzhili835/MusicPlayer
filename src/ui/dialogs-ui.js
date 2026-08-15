@@ -309,6 +309,7 @@ window.DialogsUI = {
                                 <div class="settings-nav-item active" data-panel="volume-sync">音量同步</div>
                                 <div class="settings-nav-item" data-panel="privacy">隐私与老板键</div>
                                 <div class="settings-nav-item" data-panel="network">网络与下载</div>
+                                <div class="settings-nav-item" data-panel="ai">AI 歌词识别</div>
                                 <div class="settings-nav-item" data-panel="console">检查控制台</div>
                             </div>
                             <div class="settings-content">
@@ -423,6 +424,21 @@ window.DialogsUI = {
 
                                             <div class="settings-save-section">
                                                 <button class="btn btn-primary" id="save-network-btn">保存并应用</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- AI 歌词识别面板 -->
+                                <div class="settings-content-panel" id="panel-ai">
+                                    <div class="settings-section">
+                                        <div class="settings-group">
+                                            <div class="setting-item">
+                                                <label>语音识别模型</label>
+                                                <small>音频转歌词使用本地 AI 模型（whisper，中/英/日等多语言自动检测）。模型体积较大，按需选择下载，随时可删除释放空间。图片 OCR 使用 Windows 内置引擎，无需下载。</small>
+                                            </div>
+                                            <div class="setting-actions">
+                                                <button class="btn btn-primary" id="manage-whisper-models-btn">管理模型</button>
                                             </div>
                                         </div>
                                     </div>
@@ -656,6 +672,15 @@ window.DialogsUI = {
                         logger.error('保存网络设置失败:', error);
                         this.showMessage('保存失败: ' + error.message, 'error');
                     }
+                });
+            }
+
+            // ==================== AI 歌词识别事件绑定 ====================
+            const manageModelsBtn = dialog.querySelector('#manage-whisper-models-btn');
+            if (manageModelsBtn) {
+                manageModelsBtn.addEventListener('click', async () => {
+                    dialog.remove();
+                    await this.showWhisperModelManager(false);
                 });
             }
 

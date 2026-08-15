@@ -7,6 +7,7 @@ const { parseFile } = require('music-metadata');
 const Database = require('./database.js');
 const LyricsManager = require('./lyrics.js');
 const ToolsManager = require('./tools-manager.js');
+const OcrManager = require('./ocr.js');
 
 class BiliMusicPlayer {
     constructor() {
@@ -25,6 +26,9 @@ class BiliMusicPlayer {
         // 初始化歌词管理器，传入正确的路径和工具管理器（解析 yt-dlp 路径）
         this.toolsManager = new ToolsManager();
         this.lyricsManager = new LyricsManager(this.lyricsDir, this.tempDir, this.toolsManager);
+
+        // 初始化 OCR 管理器（Windows 内置 OCR，零依赖）
+        this.ocrManager = new OcrManager(userDataPath);
 
         // 下载进程追踪（用于取消下载）
         this.downloadProcesses = new Set();
@@ -1151,9 +1155,94 @@ class BiliMusicPlayer {
             return await this.getVideoInfo(url);
         });
 
-        // 取消下载：终止所有下载相关子进程并清理临时文件
-        ipcMain.handle('download-cancel', async () => {
+        // ==================== OCR / 语音识别（音频转歌词） ====================
+
+        // 选择图片（OCR 用）
+        ipcMain.handle('ocr-select-image', async () => {
+            const result = await dialog.showOpenDialog(this.mainWindow, {
+                title: '选择歌词/课文图片',
+                properties: ['openFile'],
+                filters: [
+                    { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp'] },
+                    { name: '所有文件', extensions: ['*'] }
+                ]
+            });
+            if (!result.canceled && result.filePaths.length > 0) {
+                return result.filePaths[0];
+            }
+            return null;
+        });
+
+        // 图片 OCR（Windows 内置引擎，零下载）
+        ipcMain.handle('ocr-image', async (event, imagePath) => {
             try {
+                return await this.ocrManager.recognizeImage(imagePath);
+            } catch (error) {
+                console.error('OCR 失败:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // whisper 状态（工具 + 模型列表 + 当前选择）
+        ipcMain.handle('whisper-get-status', async () => {
+            try {
+                return {
+                    success: true,
+                    toolAvailable: !!(await this.toolsManager.getExecutableCommand('whisper')),
+                    models: await this.toolsManager.listWhisperModels(),
+                    currentModel: await this.database.getSetting('whisper_model', 'base')
+                };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 下载模型（用户选择规格后才下载，带进度事件）
+        ipcMain.handle('whisper-download-model', async (event, modelKey) => {
+            try {
+                await this.toolsManager.downloadWhisperModel(modelKey, (progress, downloaded, total) => {
+                    if (this.mainWindow) {
+                        this.mainWindow.webContents.send('whisper-model-progress', {
+                            modelKey, progress, downloaded, total
+                        });
+                    }
+                });
+                return { success: true };
+            } catch (error) {
+                console.error(`模型 ${modelKey} 下载失败:`, error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 设置当前使用的模型
+        ipcMain.handle('whisper-set-model', async (event, modelKey) => {
+            if (!this.toolsManager.whisperModels[modelKey]) {
+                return { success: false, error: '未知的模型规格' };
+            }
+            await this.database.setSetting('whisper_model', modelKey);
+            return { success: true };
+        });
+
+        // 删除模型（释放磁盘空间）
+        ipcMain.handle('whisper-delete-model', async (event, modelKey) => {
+            return { success: await this.toolsManager.deleteWhisperModel(modelKey) };
+        });
+
+        // 音频转歌词（whisper 多语言自动检测 → LRC）
+        ipcMain.handle('transcribe-song', async (event, songId) => {
+            try {
+                return await this.transcribeSong(songId);
+            } catch (error) {
+                if (this.downloadCancelRequested) {
+                    return { success: false, cancelled: true };
+                }
+                console.error('音频转写失败:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 取消下载：终止所有下载相关子进程并清理临时文件
+        ipcMain.handle('download-cancel', async () => {            try {
                 this.downloadCancelRequested = true;
 
                 for (const child of this.downloadProcesses) {
@@ -2343,6 +2432,87 @@ class BiliMusicPlayer {
                 reject(error);
             }
         });
+    }
+
+    // ==================== 音频转歌词（whisper） ====================
+
+    // 音频 → LRC 歌词：ffmpeg 转 16k 单声道 wav → whisper 自动语言识别 → LRC
+    async transcribeSong(songId) {
+        const song = await this.database.getSongById(songId);
+        if (!song) {
+            throw new Error('内容不存在');
+        }
+        if (!fsSync.existsSync(song.path)) {
+            throw new Error('音频文件不存在');
+        }
+
+        // 1. 检查 whisper 工具（首次使用时下载，约 2MB）
+        let whisperPath = await this.toolsManager.getExecutableCommand('whisper');
+        if (!whisperPath) {
+            if (this.mainWindow) {
+                this.mainWindow.webContents.send('transcribe-status', '正在下载语音识别工具（仅首次）...');
+            }
+            await this.toolsManager.downloadTool('whisper', (progress, downloaded, total) => {
+                if (this.mainWindow) {
+                    this.mainWindow.webContents.send('whisper-model-progress', {
+                        modelKey: '_tool', progress, downloaded, total
+                    });
+                }
+            });
+            whisperPath = await this.toolsManager.getExecutableCommand('whisper');
+            if (!whisperPath) {
+                throw new Error('语音识别工具不可用，请到设置 → AI 歌词识别 中重试下载');
+            }
+        }
+
+        // 2. 检查模型（模型由用户选择下载）
+        const modelKey = await this.database.getSetting('whisper_model', 'base');
+        if (!(await this.toolsManager.isWhisperModelDownloaded(modelKey))) {
+            return { success: false, modelMissing: true, modelKey };
+        }
+        const modelPath = this.toolsManager.getWhisperModelPath(modelKey);
+
+        // 3. ffmpeg 转换为 16kHz 单声道 wav（whisper 要求）
+        if (this.mainWindow) {
+            this.mainWindow.webContents.send('transcribe-status', '正在准备音频...');
+        }
+        const cleanTitle = this.cleanFileName(song.title);
+        const wavPath = path.join(this.tempDir, `${cleanTitle}_temp_transcribe.wav`);
+        const outPrefix = path.join(this.tempDir, `${cleanTitle}_temp_transcribe`);
+        await this.executeCommand(
+            ['ffmpeg', '-i', song.path, '-ar', '16000', '-ac', '1', '-y', wavPath],
+            { silent: true }
+        );
+
+        // 4. whisper 识别（-l auto 多语言自动检测；-olrc 输出歌词；-pp 输出进度百分比）
+        try {
+            if (this.mainWindow) {
+                this.mainWindow.webContents.send('transcribe-status', '正在识别（耗时取决于音频长度与模型规格）...');
+            }
+            this.downloadCancelRequested = false;
+            await this.executeCommand(
+                ['whisper', '-m', modelPath, '-f', wavPath, '-l', 'auto', '-olrc', '-of', outPrefix, '-pp'],
+                { silent: false }
+            );
+
+            // 5. 读取 LRC 结果
+            const lrcPath = outPrefix + '.lrc';
+            const lrcContent = await fs.readFile(lrcPath, 'utf8');
+
+            if (!lrcContent.trim()) {
+                return { success: false, error: '未能识别出内容（音频可能没有人声）' };
+            }
+
+            return { success: true, lrc: lrcContent };
+        } finally {
+            // 6. 清理临时文件（wav + lrc）
+            await fs.unlink(wavPath).catch(() => {});
+            await fs.unlink(outPrefix + '.lrc').catch(() => {});
+            await fs.unlink(outPrefix + '.txt').catch(() => {});
+            await fs.unlink(outPrefix + '.srt').catch(() => {});
+            await fs.unlink(outPrefix + '.json').catch(() => {});
+            await fs.unlink(outPrefix + '.tsv').catch(() => {});
+        }
     }
 
     // 清理文件名

@@ -56,6 +56,9 @@ window.ContextMenus = {
             ${this.currentView.startsWith('playlist-') ? '<div class="menu-item" data-action="remove-from-playlist">从歌单移除</div>' : ''}
             <div class="menu-item" data-action="edit-info">修改信息</div>
             <div class="menu-separator"></div>
+            <div class="menu-item" data-action="transcribe">AI 识别歌词（音频，多语言）</div>
+            <div class="menu-item" data-action="ocr-lyrics">从图片导入歌词（OCR）</div>
+            <div class="menu-separator"></div>
             <div class="menu-item" data-action="show-in-explorer">在文件夹中显示</div>
             <div class="menu-item" data-action="info">详细信息</div>
             <div class="menu-item" data-action="analyze-volume">同步音量</div>
@@ -119,6 +122,12 @@ window.ContextMenus = {
                 break;
             case 'analyze-volume':
                 await this.analyzeSongVolume(song.id);
+                break;
+            case 'transcribe':
+                await this.transcribeSong(song);
+                break;
+            case 'ocr-lyrics':
+                await this.showOcrImportDialog(song);
                 break;
             case 'classify':
                 await this.showClassifyDialog(song);

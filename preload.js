@@ -121,6 +121,35 @@ contextBridge.exposeInMainWorld('electronAPI', {
             return () => ipcRenderer.removeListener('privacy-shortcut-error', subscription);
         }
     },
+
+    // OCR（图片转文字，Windows 内置引擎，零下载）
+    ocr: {
+        selectImage: () => ipcRenderer.invoke('ocr-select-image'),
+        recognizeImage: (imagePath) => ipcRenderer.invoke('ocr-image', imagePath)
+    },
+
+    // 语音识别（音频转歌词，whisper，模型由用户选择下载）
+    whisper: {
+        getStatus: () => ipcRenderer.invoke('whisper-get-status'),
+        downloadModel: (modelKey) => ipcRenderer.invoke('whisper-download-model', modelKey),
+        setModel: (modelKey) => ipcRenderer.invoke('whisper-set-model', modelKey),
+        deleteModel: (modelKey) => ipcRenderer.invoke('whisper-delete-model', modelKey),
+        transcribeSong: (songId) => ipcRenderer.invoke('transcribe-song', songId),
+
+        // 模型下载进度
+        onModelProgress: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('whisper-model-progress', subscription);
+            return () => ipcRenderer.removeListener('whisper-model-progress', subscription);
+        },
+
+        // 转写状态提示
+        onTranscribeStatus: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('transcribe-status', subscription);
+            return () => ipcRenderer.removeListener('transcribe-status', subscription);
+        }
+    },
     
     // 工具诊断
     tools: {

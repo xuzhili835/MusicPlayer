@@ -1275,6 +1275,36 @@ input[type="range"]:disabled {
     word-break: break-all;
 }
 
+/* 歌词编辑大文本框 */
+.lyrics-textarea {
+    width: 100%;
+    min-height: 260px;
+    max-height: 46vh;
+    padding: 12px 14px;
+    font-family: Consolas, Monaco, 'Courier New', monospace;
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+    background: var(--surface-2);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    outline: none;
+    resize: vertical;
+    transition: border-color 0.15s ease;
+}
+
+.lyrics-textarea:focus {
+    border-color: var(--accent);
+}
+
+.lyrics-textarea:disabled {
+    opacity: 0.6;
+}
+
+.lyrics-textarea::placeholder {
+    color: var(--text-faint);
+}
+
 /* ---------- 下载相关 ---------- */
 .video-preview {
     display: flex;

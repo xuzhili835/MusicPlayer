@@ -92,9 +92,60 @@ class ToolsManager {
                     filename: 'ffprobe',
                     isArchive: true
                 }
+            },
+            'whisper': {
+                windows: {
+                    urls: [
+                        'https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.6/whisper-bin-x64.zip',
+                        'https://ghproxy.com/https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.6/whisper-bin-x64.zip'
+                    ],
+                    filename: 'whisper-cli.exe',
+                    isArchive: true
+                }
             }
         };
-        
+
+        // whisper 语音识别模型（用户按需选择下载，存 userData/models/）
+        this.modelsDir = path.join(userDataPath, 'models');
+        this.whisperModels = {
+            tiny: {
+                label: 'Tiny（最快，精度一般）',
+                sizeText: '约 75 MB',
+                urls: [
+                    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
+                    'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
+                ],
+                filename: 'ggml-tiny.bin'
+            },
+            base: {
+                label: 'Base（推荐，速度与精度均衡）',
+                sizeText: '约 142 MB',
+                urls: [
+                    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
+                    'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin'
+                ],
+                filename: 'ggml-base.bin'
+            },
+            small: {
+                label: 'Small（精度较高，速度较慢）',
+                sizeText: '约 466 MB',
+                urls: [
+                    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
+                    'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin'
+                ],
+                filename: 'ggml-small.bin'
+            },
+            medium: {
+                label: 'Medium（精度最高，很慢，占空间大）',
+                sizeText: '约 1.5 GB',
+                urls: [
+                    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin',
+                    'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin'
+                ],
+                filename: 'ggml-medium.bin'
+            }
+        };
+
         console.log('应用bin目录:', this.appBinDir);
         console.log('用户bin目录:', this.userBinDir);
         this.ensureUserBinDir();
@@ -409,6 +460,90 @@ class ToolsManager {
         return results;
     }
     
+    // ==================== whisper 模型管理（按需下载，用户选择规格） ====================
+
+    // 模型文件路径
+    getWhisperModelPath(modelKey) {
+        const config = this.whisperModels[modelKey];
+        if (!config) return null;
+        return path.join(this.modelsDir, config.filename);
+    }
+
+    // 模型是否已下载
+    async isWhisperModelDownloaded(modelKey) {
+        const modelPath = this.getWhisperModelPath(modelKey);
+        if (!modelPath) return false;
+        try {
+            const stats = await fs.stat(modelPath);
+            return stats.size > 1024 * 1024; // 大于 1MB 才视为完整
+        } catch (error) {
+            return false;
+        }
+    }
+
+    // 列出全部模型及下载状态
+    async listWhisperModels() {
+        const result = {};
+        for (const [key, config] of Object.entries(this.whisperModels)) {
+            const downloaded = await this.isWhisperModelDownloaded(key);
+            let sizeBytes = 0;
+            if (downloaded) {
+                try {
+                    const stats = await fs.stat(this.getWhisperModelPath(key));
+                    sizeBytes = stats.size;
+                } catch (error) { /* 忽略 */ }
+            }
+            result[key] = {
+                key,
+                label: config.label,
+                sizeText: config.sizeText,
+                downloaded,
+                sizeBytes
+            };
+        }
+        return result;
+    }
+
+    // 下载模型（带进度回调，.part 临时文件防止半截文件）
+    async downloadWhisperModel(modelKey, onProgress = null) {
+        const config = this.whisperModels[modelKey];
+        if (!config) {
+            throw new Error(`未知的模型规格: ${modelKey}`);
+        }
+
+        await fs.mkdir(this.modelsDir, { recursive: true });
+        const finalPath = this.getWhisperModelPath(modelKey);
+        const tempPath = finalPath + '.part';
+
+        // 清理可能存在的半截文件
+        try { await fs.unlink(tempPath); } catch (error) { /* 忽略 */ }
+
+        await this.downloadWithRetry(config.urls, tempPath, onProgress);
+
+        // 校验大小（大于 1MB 才视为下载成功）
+        const stats = await fs.stat(tempPath);
+        if (stats.size < 1024 * 1024) {
+            await fs.unlink(tempPath).catch(() => {});
+            throw new Error('模型下载不完整，请重试');
+        }
+
+        await fs.rename(tempPath, finalPath);
+        console.log(`模型 ${modelKey} 下载完成: ${finalPath}`);
+        return finalPath;
+    }
+
+    // 删除模型
+    async deleteWhisperModel(modelKey) {
+        const modelPath = this.getWhisperModelPath(modelKey);
+        if (!modelPath) return false;
+        try {
+            await fs.unlink(modelPath);
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
     // 获取执行命令（优先使用应用bin目录工具，然后使用用户bin目录工具，最后使用系统工具）
     async getExecutableCommand(toolName) {
         try {

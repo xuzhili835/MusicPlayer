@@ -355,31 +355,41 @@ class LyricsManager {
         try {
             const lines = lrcContent.split('\n');
             const lyrics = [];
-            
+            let hasTimestamps = false;
+
             for (const line of lines) {
                 const trimmedLine = line.trim();
                 if (!trimmedLine) continue;
-                
+
                 // 匹配时间标签格式 [mm:ss.xx]
                 const timeMatch = trimmedLine.match(/\[(\d{2}):(\d{2})\.(\d{2})\](.*)/);
                 if (timeMatch) {
+                    hasTimestamps = true;
                     const minutes = parseInt(timeMatch[1], 10);
                     const seconds = parseInt(timeMatch[2], 10);
                     const centiseconds = parseInt(timeMatch[3], 10);
                     const text = timeMatch[4].trim();
-                    
+
                     const totalSeconds = minutes * 60 + seconds + centiseconds / 100;
-                    
+
                     lyrics.push({
                         time: totalSeconds,
                         text: text
                     });
                 }
             }
-            
+
+            // 纯文本歌词（OCR 导入的原文等，无时间标签）：按行保留，time 为 null
+            if (!hasTimestamps) {
+                return lines
+                    .map(l => l.trim())
+                    .filter(l => l.length > 0)
+                    .map(l => ({ time: null, text: l }));
+            }
+
             // 按时间排序
             lyrics.sort((a, b) => a.time - b.time);
-            
+
             return lyrics;
         } catch (error) {
             console.error('解析LRC内容失败:', error);
