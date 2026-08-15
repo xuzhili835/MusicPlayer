@@ -36,8 +36,7 @@ class BiliMusicPlayer {
         this.privacySettings = {
             enabled: true,
             accelerator: 'F9',      // 老板键默认键位
-            action: 'overlay',      // 'overlay' | 'overlay_minimize'
-            contentProtection: true // 隐私期间防截屏/防投屏
+            action: 'overlay'       // 'overlay' | 'overlay_minimize'
         };
         
         console.log('音乐目录:', this.musicDir);
@@ -184,14 +183,8 @@ class BiliMusicPlayer {
     applyPrivacyState() {
         const active = this.privacyActive;
 
-        // 主窗口：防截屏 + 通知渲染进程（暂停播放 + 全屏遮罩）
+        // 主窗口：通知渲染进程（暂停播放 + 全屏遮罩）
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-            try {
-                this.mainWindow.setContentProtection(active && this.privacySettings.contentProtection);
-            } catch (e) {
-                console.warn('设置防截屏失败:', e.message);
-            }
-
             this.mainWindow.webContents.send('privacy-state-changed', { active });
         }
 

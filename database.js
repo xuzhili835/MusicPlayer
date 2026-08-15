@@ -116,6 +116,7 @@ class Database {
                 const hasAddedAt = tableInfo.some(column => column.name === 'added_at');
                 const hasVolumeGain = tableInfo.some(column => column.name === 'volume_gain');
                 const hasIntegratedLoudness = tableInfo.some(column => column.name === 'integrated_loudness');
+                const hasContentType = tableInfo.some(column => column.name === 'content_type');
 
                 // 添加 volume_gain 字段（如果不存在）
                 if (hasAddedAt && !hasVolumeGain) {
@@ -141,6 +142,17 @@ class Database {
                     console.log('检测到旧的表结构，重建数据库...');
                     await this.rebuildDatabase();
                     return;
+                }
+
+                // 添加 content_type 字段（内容分类：music/podcast/listening）
+                if (hasAddedAt && !hasContentType) {
+                    console.log('检测到缺少 content_type 字段，正在添加...');
+                    try {
+                        await this.run("ALTER TABLE songs ADD COLUMN content_type TEXT DEFAULT 'music'");
+                        console.log('content_type 字段添加成功');
+                    } catch (error) {
+                        console.log('添加 content_type 字段失败:', error.message);
+                    }
                 }
 
                 console.log('数据库表结构正确，无需迁移');
@@ -328,7 +340,8 @@ class Database {
                 play_count INTEGER DEFAULT 0,
                 added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 volume_gain REAL DEFAULT NULL,
-                integrated_loudness REAL DEFAULT NULL
+                integrated_loudness REAL DEFAULT NULL,
+                content_type TEXT DEFAULT 'music'
             );
 
             -- 歌单表

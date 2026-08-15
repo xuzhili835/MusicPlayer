@@ -15,6 +15,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
         getVersion: () => ipcRenderer.invoke('app-get-version')
     },
 
+    // 主题
+    theme: {
+        set: (theme) => ipcRenderer.invoke('theme-set', theme),
+        get: () => ipcRenderer.invoke('theme-get')
+    },
+
     // 数据库操作
     database: {
         getSongs: () => ipcRenderer.invoke('database-get-songs'),
