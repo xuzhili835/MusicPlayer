@@ -273,6 +273,17 @@ window.DialogsUI = {
                 console.error('获取隐私设置失败:', error);
             }
 
+            // 获取网络设置（代理 / cookies）
+            let networkSettings = { proxy: '', cookiesPath: '' };
+            try {
+                const savedProxy = await electronAPI.database.getSetting('download_proxy', '');
+                const savedCookies = await electronAPI.database.getSetting('cookies_path', '');
+                networkSettings.proxy = (savedProxy && typeof savedProxy === 'string') ? savedProxy : '';
+                networkSettings.cookiesPath = (savedCookies && typeof savedCookies === 'string') ? savedCookies : '';
+            } catch (error) {
+                console.error('获取网络设置失败:', error);
+            }
+
             // 获取版本号
             let versionText = 'v1.0.0';
             try {
@@ -297,6 +308,7 @@ window.DialogsUI = {
                             <div class="settings-sidebar-nav">
                                 <div class="settings-nav-item active" data-panel="volume-sync">音量同步</div>
                                 <div class="settings-nav-item" data-panel="privacy">隐私与老板键</div>
+                                <div class="settings-nav-item" data-panel="network">网络与下载</div>
                                 <div class="settings-nav-item" data-panel="console">检查控制台</div>
                             </div>
                             <div class="settings-content">
@@ -384,6 +396,33 @@ window.DialogsUI = {
 
                                             <div class="settings-save-section">
                                                 <button class="btn btn-primary" id="save-privacy-btn">保存并应用</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 网络与下载面板 -->
+                                <div class="settings-content-panel" id="panel-network">
+                                    <div class="settings-section">
+                                        <div class="settings-group">
+                                            <div class="setting-item">
+                                                <label>代理地址</label>
+                                                <input type="text" id="download-proxy" value="${utils.escapeHtml(networkSettings.proxy)}" placeholder="http://127.0.0.1:7890" style="height: 36px; padding: 0 12px; font-size: 13.5px; color: var(--text); background: var(--surface-2); border: 1px solid transparent; border-radius: 8px; outline: none; max-width: 320px;">
+                                                <small>下载 YouTube 内容通常需要代理；B站一般无需设置。留空表示直连。</small>
+                                            </div>
+
+                                            <div class="setting-item">
+                                                <label>cookies.txt（可选）</label>
+                                                <div class="range-container">
+                                                    <span id="cookies-path-display" style="flex: 1; min-width: 0; font-size: 12px; color: var(--text-muted); padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${utils.escapeHtml(networkSettings.cookiesPath || '未选择')}</span>
+                                                    <button class="btn btn-secondary" id="select-cookies-btn">选择文件</button>
+                                                    <button class="btn btn-secondary" id="clear-cookies-btn" ${networkSettings.cookiesPath ? '' : 'style="display:none;"'}>清除</button>
+                                                </div>
+                                                <small>使用浏览器导出的 cookies.txt 可下载需要登录的内容（如年龄限制视频）。</small>
+                                            </div>
+
+                                            <div class="settings-save-section">
+                                                <button class="btn btn-primary" id="save-network-btn">保存并应用</button>
                                             </div>
                                         </div>
                                     </div>
@@ -569,6 +608,52 @@ window.DialogsUI = {
                         }
                     } catch (error) {
                         logger.error('保存隐私设置失败:', error);
+                        this.showMessage('保存失败: ' + error.message, 'error');
+                    }
+                });
+            }
+
+            // ==================== 网络与下载事件绑定 ====================
+            const proxyInput = dialog.querySelector('#download-proxy');
+            const cookiesDisplay = dialog.querySelector('#cookies-path-display');
+            const selectCookiesBtn = dialog.querySelector('#select-cookies-btn');
+            const clearCookiesBtn = dialog.querySelector('#clear-cookies-btn');
+            const saveNetworkBtn = dialog.querySelector('#save-network-btn');
+            let pendingCookiesPath = networkSettings.cookiesPath;
+
+            if (selectCookiesBtn) {
+                selectCookiesBtn.addEventListener('click', async () => {
+                    try {
+                        const filePath = await electronAPI.file.selectCookies();
+                        if (filePath) {
+                            pendingCookiesPath = filePath;
+                            if (cookiesDisplay) cookiesDisplay.textContent = filePath;
+                            if (clearCookiesBtn) clearCookiesBtn.style.display = '';
+                        }
+                    } catch (error) {
+                        logger.error('选择 cookies 文件失败:', error);
+                    }
+                });
+            }
+
+            if (clearCookiesBtn) {
+                clearCookiesBtn.addEventListener('click', () => {
+                    pendingCookiesPath = '';
+                    if (cookiesDisplay) cookiesDisplay.textContent = '未选择';
+                    clearCookiesBtn.style.display = 'none';
+                });
+            }
+
+            if (saveNetworkBtn) {
+                saveNetworkBtn.addEventListener('click', async () => {
+                    try {
+                        const proxy = (proxyInput && proxyInput.value) ? proxyInput.value.trim() : '';
+                        await electronAPI.database.setSetting('download_proxy', proxy);
+                        await electronAPI.database.setSetting('cookies_path', pendingCookiesPath || '');
+                        this.showMessage('网络设置已保存', 'success');
+                        dialog.remove();
+                    } catch (error) {
+                        logger.error('保存网络设置失败:', error);
                         this.showMessage('保存失败: ' + error.message, 'error');
                     }
                 });

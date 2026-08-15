@@ -74,18 +74,18 @@ window.DownloadUI = {
         }
 
         const inputText = urlInput.value.trim();
-        // 智能提取B站链接
-        const url = utils.extractBilibiliUrl(inputText);
+        // 智能提取音源链接（B站 或 YouTube）
+        const url = utils.extractMediaUrl(inputText);
 
         if (!url) {
-            this.showMessage('未找到有效的链接', 'warning');
+            this.showMessage('未找到有效的链接（支持 Bilibili / YouTube）', 'warning');
             return;
         }
 
         try {
             this.showDownloadProgress();
 
-            const result = await electronAPI.download.bilibiliVideo(url, {
+            const result = await electronAPI.download.media(url, {
                 downloadLyrics: true
             });
 

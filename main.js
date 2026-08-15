@@ -1116,12 +1116,34 @@ class BiliMusicPlayer {
             shell.showItemInFolder(filePath);
         });
 
+        // 选择 cookies.txt 文件（YouTube 下载用）
+        ipcMain.handle('file-select-cookies', async () => {
+            const result = await dialog.showOpenDialog(this.mainWindow, {
+                title: '选择 cookies.txt 文件',
+                properties: ['openFile'],
+                filters: [
+                    { name: 'Cookies 文件', extensions: ['txt'] },
+                    { name: '所有文件', extensions: ['*'] }
+                ]
+            });
+
+            if (!result.canceled && result.filePaths.length > 0) {
+                return result.filePaths[0];
+            }
+            return null;
+        });
+
         ipcMain.handle('file-open-external', async (event, url) => {
             shell.openExternal(url);
         });
 
         // 下载功能
         ipcMain.handle('download-bilibili-video', async (event, url, options = {}) => {
+            return await this.downloadBilibiliVideo(url, options);
+        });
+
+        // 通用音源下载（B站 / YouTube，同一管线）
+        ipcMain.handle('download-media', async (event, url, options = {}) => {
             return await this.downloadBilibiliVideo(url, options);
         });
 
@@ -1913,6 +1935,24 @@ class BiliMusicPlayer {
 
     }
 
+    // 获取网络参数（代理 / cookies，用于 B站 与 YouTube 下载）
+    async getNetworkArgs() {
+        const args = [];
+        try {
+            const proxy = await this.database.getSetting('download_proxy', '');
+            if (proxy && typeof proxy === 'string' && proxy.trim()) {
+                args.push('--proxy', proxy.trim());
+            }
+            const cookiesPath = await this.database.getSetting('cookies_path', '');
+            if (cookiesPath && typeof cookiesPath === 'string' && cookiesPath.trim()) {
+                args.push('--cookies', cookiesPath.trim());
+            }
+        } catch (error) {
+            console.warn('读取网络设置失败:', error.message);
+        }
+        return args;
+    }
+
     // 获取视频信息
     async getVideoInfo(url) {
         try {
@@ -1936,9 +1976,10 @@ class BiliMusicPlayer {
 
             console.log(`使用yt-dlp路径: ${ytdlpPath}`);
 
-            // 异步执行，不阻塞主进程；数组参数避免 shell 引号问题
+            // 异步执行，不阻塞主进程；数组参数避免 shell 引号问题；注入代理/cookies
+            const networkArgs = await this.getNetworkArgs();
             const stdout = await this.executeCommand(
-                ['yt-dlp', '--dump-json', '--no-playlist', url],
+                ['yt-dlp', '--dump-json', '--no-playlist', ...networkArgs, url],
                 { timeout: 30000, maxBuffer: 1024 * 1024 * 10, silent: true }
             );
 
@@ -2017,7 +2058,8 @@ class BiliMusicPlayer {
             // 临时文件路径
             const tempAudioPath = path.join(this.tempDir, `${cleanTitle}_temp.%(ext)s`);
 
-            // 下载最好质量的音频
+            // 下载最好质量的音频（注入代理/cookies，YouTube 场景必需）
+            const networkArgs = await this.getNetworkArgs();
             const downloadCommand = [
                 'yt-dlp',
                 '--extract-audio',
@@ -2025,6 +2067,7 @@ class BiliMusicPlayer {
                 '--audio-quality', '0',
                 '--output', tempAudioPath,
                 '--no-playlist',
+                ...networkArgs,
                 url
             ];
 
@@ -2090,9 +2133,11 @@ class BiliMusicPlayer {
 
             // 阶段 4: 下载歌词
             sendStage('正在下载歌词...');
-            // 尝试下载歌词
+            // 尝试下载歌词（字幕下载也走代理）
             if (options.downloadLyrics) {
                 try {
+                    const proxy = await this.database.getSetting('download_proxy', '');
+                    this.lyricsManager.proxy = (proxy && typeof proxy === 'string') ? proxy.trim() : '';
                     const result = await this.lyricsManager.downloadLyrics(url, videoInfo.title);
                     if (!result) {
                         // 未找到歌词，显示提示并短暂延迟

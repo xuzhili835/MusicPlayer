@@ -10,6 +10,7 @@ class LyricsManager {
         this.lyricsDir = lyricsDir || path.join(__dirname, 'lyrics');
         this.tempDir = tempDir || path.join(__dirname, 'temp_downloads');
         this.toolsManager = toolsManager; // 用于解析 yt-dlp 的真实可执行路径
+        this.proxy = ''; // 可选代理（YouTube 等场景由主进程注入）
         this.subLanguages = ['zh-Hans', 'zh', 'en']; // 按优先级尝试的字幕语言
         this.ensureLyricsDir();
     }
@@ -95,9 +96,15 @@ class LyricsManager {
                 '--write-subs',
                 '--skip-download',
                 '--sub-lang', this.subLanguages.join(','),
-                '--output', outputTemplate,
-                videoUrl
+                '--output', outputTemplate
             ];
+
+            // 代理（主进程注入，YouTube 场景）
+            if (this.proxy) {
+                args.push('--proxy', this.proxy);
+            }
+
+            args.push(videoUrl);
 
             console.log('下载字幕:', ytdlpPath, args.join(' '));
             // 数组参数 + execFile，避免 shell 引号问题，且不阻塞主进程

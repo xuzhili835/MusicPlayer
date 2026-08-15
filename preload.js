@@ -61,6 +61,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 文件操作
     file: {
         selectMusic: () => ipcRenderer.invoke('file-select-music'),
+        selectCookies: () => ipcRenderer.invoke('file-select-cookies'),
         showInExplorer: (filePath) => ipcRenderer.invoke('file-show-in-explorer', filePath),
         openExternal: (url) => ipcRenderer.invoke('file-open-external', url),
         
@@ -73,6 +74,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 下载功能
     download: {
         bilibiliVideo: (url, options) => ipcRenderer.invoke('download-bilibili-video', url, options),
+        media: (url, options) => ipcRenderer.invoke('download-media', url, options),
         getVideoInfo: (url) => ipcRenderer.invoke('download-get-video-info', url),
         cancel: () => ipcRenderer.invoke('download-cancel'),
 
@@ -146,8 +148,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }
 });
 
-// 工具函数
-contextBridge.exposeInMainWorld('utils', {
+// 工具函数（先定义为本世界变量，内部可互相引用，再暴露到主世界）
+const utils = {
     // 时间格式化
     formatTime: (seconds) => {
         if (!seconds || isNaN(seconds)) return '0:00';
@@ -199,7 +201,7 @@ contextBridge.exposeInMainWorld('utils', {
     // 从文本中提取B站链接
     extractBilibiliUrl: (text) => {
         if (!text || typeof text !== 'string') return null;
-        
+
         // 匹配各种B站链接格式
         const patterns = [
             /https?:\/\/www\.bilibili\.com\/video\/[^\s]+/g,
@@ -209,7 +211,7 @@ contextBridge.exposeInMainWorld('utils', {
             /BV[a-zA-Z0-9]+/g,
             /av\d+/g
         ];
-        
+
         for (const pattern of patterns) {
             const matches = text.match(pattern);
             if (matches && matches.length > 0) {
@@ -221,8 +223,47 @@ contextBridge.exposeInMainWorld('utils', {
                 return url;
             }
         }
-        
+
         return null;
+    },
+
+    // YouTube URL 验证
+    isYouTubeUrl: (url) => {
+        if (!url || typeof url !== 'string') return false;
+        return /^https?:\/\/(www\.|m\.|music\.)?youtube\.com\/(watch|shorts|live)/.test(url) ||
+               /^https?:\/\/youtu\.be\//.test(url);
+    },
+
+    // 从文本中提取 YouTube 链接
+    extractYouTubeUrl: (text) => {
+        if (!text || typeof text !== 'string') return null;
+
+        const patterns = [
+            /https?:\/\/(www\.|m\.|music\.)?youtube\.com\/watch\?[^\s]+/g,
+            /https?:\/\/(www\.|m\.|music\.)?youtube\.com\/shorts\/[^\s]+/g,
+            /https?:\/\/(www\.|m\.|music\.)?youtube\.com\/live\/[^\s]+/g,
+            /https?:\/\/youtu\.be\/[^\s]+/g
+        ];
+
+        for (const pattern of patterns) {
+            const matches = text.match(pattern);
+            if (matches && matches.length > 0) {
+                return matches[0];
+            }
+        }
+
+        return null;
+    },
+
+    // 通用音源链接提取（B站 或 YouTube）
+    extractMediaUrl: (text) => {
+        if (!text || typeof text !== 'string') return null;
+        return utils.extractBilibiliUrl(text) || utils.extractYouTubeUrl(text);
+    },
+
+    // 判断是否为支持的音源链接
+    isSupportedMediaUrl: (url) => {
+        return utils.isBilibiliUrl(url) || utils.isYouTubeUrl(url);
     },
 
     // HTML 转义（防止歌曲/歌单元数据注入 XSS）
@@ -291,7 +332,9 @@ contextBridge.exposeInMainWorld('utils', {
             return clonedObj;
         }
     }
-});
+};
+
+contextBridge.exposeInMainWorld('utils', utils);
 
 // 本地存储API
 contextBridge.exposeInMainWorld('storage', {

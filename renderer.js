@@ -306,14 +306,14 @@ class MusicPlayer {
         this.bindClick('playlist-cancel-btn', () => this.hidePlaylistDialog());
         this.bindClick('playlist-create-btn', () => this.createPlaylist());
 
-        // URL输入事件（自动预览）
+        // URL输入事件（自动预览，B站 / YouTube）
         const urlInput = document.getElementById('download-url');
         if (urlInput) {
             urlInput.addEventListener('input', utils.debounce(async (e) => {
                 if (!e.target || !e.target.value) return;
                 const inputText = e.target.value.trim();
-                const url = utils.extractBilibiliUrl(inputText);
-                if (url && utils.isBilibiliUrl(url)) {
+                const url = utils.extractMediaUrl(inputText);
+                if (url && utils.isSupportedMediaUrl(url)) {
                     try {
                         await this.previewVideo(url);
                     } catch (error) {
