@@ -5,6 +5,32 @@
     box-sizing: border-box;
 }
 
+/* ==================== 隐私模式（老板键） ==================== */
+/* 全屏不透明遮罩：盖住整个窗口（含标题栏），不显示任何信息 */
+#privacy-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 99999;
+    background: #17181c; /* 纯不透明深色，与空状态观感一致 */
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+}
+
+#privacy-overlay-logo {
+    opacity: 0.05;
+    pointer-events: none;
+}
+
+html.privacy-on #privacy-overlay {
+    display: flex;
+}
+
+html.privacy-on body {
+    overflow: hidden;
+}
+
 :root {
     --primary: #667eea;
     --primary-hover: #5a6fd8;

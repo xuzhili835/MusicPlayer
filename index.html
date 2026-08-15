@@ -29,6 +29,12 @@
             </div>
         </div>
         <div class="title-bar-right">
+            <button id="privacy-btn" class="window-btn privacy-btn" title="隐私模式 (Ctrl+Shift+H)" aria-label="隐私模式">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/>
+                    <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+            </button>
             <button id="window-minimize-btn" class="window-btn" title="最小化">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <line x1="5" y1="12" x2="19" y2="12"/>
@@ -329,6 +335,11 @@
 
 
 
+    <!-- 隐私模式遮罩（老板键触发：全屏不透明，不显示任何信息） -->
+    <div id="privacy-overlay" aria-hidden="true">
+        <div id="privacy-overlay-logo"></div>
+    </div>
+
     <!-- 消息提示 -->
     <div id="message-container" class="message-container">
         <!-- 消息将动态添加 -->
@@ -339,6 +350,7 @@
 
     <!-- 脚本 -->
     <script src="icons.js"></script>
+    <script src="privacy.js"></script>
     <script src="renderer.js"></script>
     
     <!-- Sakura Echo Logo 初始化 -->
@@ -365,6 +377,13 @@
                     // 创建一个放大版本的樱花Logo用于空状态
                     const largeIcon = window.icons.sakuraLogo.replace(/width="24"/, 'width="64"').replace(/height="24"/, 'height="64"');
                     emptyStateIcon.innerHTML = largeIcon;
+                }
+
+                // 隐私遮罩：只放低对比度 logo，无任何文字
+                const privacyLogo = document.getElementById('privacy-overlay-logo');
+                if (privacyLogo && window.icons && window.icons.sakuraLogo) {
+                    const bigLogo = window.icons.sakuraLogo.replace(/width="24"/, 'width="160"').replace(/height="24"/, 'height="160"');
+                    privacyLogo.innerHTML = bigLogo;
                 }
             }, 100);
         });

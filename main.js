@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Menu, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
@@ -29,6 +29,16 @@ class BiliMusicPlayer {
         // 下载进程追踪（用于取消下载）
         this.downloadProcesses = new Set();
         this.downloadCancelRequested = false;
+
+        // 隐私模式（老板键）
+        this.privacyActive = false;
+        this.lyricsWindowWasVisible = false; // 进入隐私模式时桌面歌词窗口是否可见
+        this.privacySettings = {
+            enabled: true,
+            accelerator: 'F9',      // 老板键默认键位
+            action: 'overlay',      // 'overlay' | 'overlay_minimize'
+            contentProtection: true // 隐私期间防截屏/防投屏
+        };
         
         console.log('音乐目录:', this.musicDir);
         console.log('临时目录:', this.tempDir);
@@ -52,7 +62,8 @@ class BiliMusicPlayer {
 
             this.createMainWindow();
             this.setupIPC();
-            
+            await this.initPrivacy();
+
             app.on('activate', () => {
                 if (BrowserWindow.getAllWindows().length === 0) {
                     this.createMainWindow();
@@ -113,10 +124,95 @@ class BiliMusicPlayer {
         });
 
         // 处理强制退出
-        app.on('will-quit', async (event) => {
-            // 注意：数据库已在 cleanup() 中关闭，这里不做额外操作
+        app.on('will-quit', () => {
+            // 注销所有全局快捷键（老板键）
+            try { globalShortcut.unregisterAll(); } catch (e) { /* 忽略 */ }
             console.log('应用正在退出...');
         });
+    }
+
+    // ==================== 隐私模式（老板键） ====================
+
+    // 初始化隐私模式：加载设置并注册全局快捷键
+    async initPrivacy() {
+        try {
+            const saved = await this.database.getSetting('privacy_settings', null);
+            if (saved && typeof saved === 'object') {
+                this.privacySettings = { ...this.privacySettings, ...saved };
+            }
+
+            const ok = this.applyPrivacyShortcut();
+            if (!ok && this.mainWindow) {
+                this.mainWindow.webContents.send('privacy-shortcut-error', {
+                    message: `老板键 ${this.privacySettings.accelerator} 注册失败（可能被其他程序占用），可在设置中修改键位`
+                });
+            }
+        } catch (error) {
+            console.error('初始化隐私模式失败:', error);
+        }
+    }
+
+    // 注册/重新注册老板键全局快捷键，返回是否成功
+    applyPrivacyShortcut() {
+        try {
+            // 先清掉旧注册
+            try { globalShortcut.unregisterAll(); } catch (e) { /* 忽略 */ }
+
+            if (!this.privacySettings.enabled) {
+                return true;
+            }
+
+            const accelerator = this.privacySettings.accelerator || 'F9';
+            const ok = globalShortcut.register(accelerator, () => this.togglePrivacy());
+            if (!ok) {
+                console.warn(`老板键 ${accelerator} 注册失败`);
+            }
+            return ok;
+        } catch (error) {
+            console.error('注册老板键失败:', error);
+            return false;
+        }
+    }
+
+    // 切换隐私模式
+    togglePrivacy() {
+        this.privacyActive = !this.privacyActive;
+        this.applyPrivacyState();
+    }
+
+    // 应用隐私状态到所有窗口
+    applyPrivacyState() {
+        const active = this.privacyActive;
+
+        // 主窗口：防截屏 + 通知渲染进程（暂停播放 + 全屏遮罩）
+        if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+            try {
+                this.mainWindow.setContentProtection(active && this.privacySettings.contentProtection);
+            } catch (e) {
+                console.warn('设置防截屏失败:', e.message);
+            }
+
+            this.mainWindow.webContents.send('privacy-state-changed', { active });
+        }
+
+        // 桌面歌词窗口：进入隐私时隐藏，退出时恢复
+        if (active) {
+            this.lyricsWindowWasVisible = !!(
+                this.lyricsWindow && !this.lyricsWindow.isDestroyed() && this.lyricsWindow.isVisible()
+            );
+            if (this.lyricsWindow && !this.lyricsWindow.isDestroyed() && this.lyricsWindow.isVisible()) {
+                this.lyricsWindow.hide();
+            }
+        } else if (this.lyricsWindow && !this.lyricsWindow.isDestroyed() && this.lyricsWindowWasVisible) {
+            this.lyricsWindow.show();
+            this.lyricsWindowWasVisible = false;
+        }
+
+        // 可选：触发后最小化窗口
+        if (active && this.privacySettings.action === 'overlay_minimize' &&
+            this.mainWindow && !this.mainWindow.isDestroyed()) {
+            this.mainWindow.minimize();
+        }
     }
     
     // 设置工具
@@ -841,6 +937,41 @@ class BiliMusicPlayer {
                     success: false,
                     error: error.message
                 };
+            }
+        });
+
+        // 隐私模式（老板键）
+        ipcMain.handle('privacy-toggle', async () => {
+            this.togglePrivacy();
+            return { success: true, active: this.privacyActive };
+        });
+
+        ipcMain.handle('privacy-get-settings', async () => {
+            return { success: true, settings: { ...this.privacySettings } };
+        });
+
+        ipcMain.handle('privacy-set-settings', async (event, settings) => {
+            try {
+                if (!settings || typeof settings !== 'object') {
+                    return { success: false, error: '无效的设置' };
+                }
+
+                this.privacySettings = { ...this.privacySettings, ...settings };
+                await this.database.setSetting('privacy_settings', this.privacySettings);
+
+                // 重新注册快捷键
+                const ok = this.applyPrivacyShortcut();
+                if (!ok) {
+                    return {
+                        success: false,
+                        error: `快捷键 ${this.privacySettings.accelerator} 注册失败（可能被其他程序占用），请换一个键位`
+                    };
+                }
+
+                return { success: true, settings: { ...this.privacySettings } };
+            } catch (error) {
+                console.error('保存隐私设置失败:', error);
+                return { success: false, error: error.message };
             }
         });
 

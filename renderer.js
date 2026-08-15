@@ -109,6 +109,9 @@ class MusicPlayer {
         this.bindClick('window-maximize-btn', () => electronAPI.window.maximize());
         this.bindClick('window-close-btn', () => electronAPI.window.close());
 
+        // 隐私模式按钮（老板键的应用内入口）
+        this.bindClick('privacy-btn', () => PrivacyMode.toggle());
+
         // 搜索功能（仅当首次绑定失败时才重试，避免替换输入框导致正在输入的内容丢失）
         if (!this.setupSearchInput()) {
             setTimeout(() => {
@@ -2242,6 +2245,17 @@ class MusicPlayer {
             const volumeSyncEnabled = await electronAPI.database.getSetting('volume_sync_enabled', true);
             const volumeStats = await electronAPI.volume.getStats();
 
+            // 获取隐私设置
+            let privacySettings = { enabled: true, accelerator: 'F9', action: 'overlay', contentProtection: true };
+            try {
+                const privacyResult = await electronAPI.privacy.getSettings();
+                if (privacyResult && privacyResult.success && privacyResult.settings) {
+                    privacySettings = { ...privacySettings, ...privacyResult.settings };
+                }
+            } catch (error) {
+                console.error('获取隐私设置失败:', error);
+            }
+
             // 获取版本号
             let versionText = 'v1.0.0';
             try {
@@ -2265,6 +2279,7 @@ class MusicPlayer {
                         <div class="settings-content-wrapper">
                             <div class="settings-sidebar-nav">
                                 <div class="settings-nav-item active" data-panel="volume-sync">音量同步</div>
+                                <div class="settings-nav-item" data-panel="privacy">隐私与老板键</div>
                                 <div class="settings-nav-item" data-panel="console">检查控制台</div>
                             </div>
                             <div class="settings-content">
@@ -2312,6 +2327,53 @@ class MusicPlayer {
 
                                             <div class="settings-save-section">
                                                 <button class="btn btn-primary" id="save-settings-btn">保存并应用</button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 隐私与老板键面板 -->
+                                <div class="settings-content-panel" id="panel-privacy">
+                                    <div class="settings-section">
+                                        <div class="settings-group">
+                                            <div class="setting-item">
+                                                <div class="checkbox-wrapper">
+                                                    <input type="checkbox" id="privacy-enabled" ${privacySettings.enabled ? 'checked' : ''}>
+                                                    <label for="privacy-enabled">启用老板键（全局快捷键，在其他应用或游戏中也能触发）</label>
+                                                </div>
+                                            </div>
+
+                                            <div class="setting-item">
+                                                <label>老板键键位</label>
+                                                <div class="range-container">
+                                                    <span id="privacy-accelerator-display" style="min-width: 90px; font-family: Consolas, Monaco, monospace; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--hover);">${utils.escapeHtml(privacySettings.accelerator)}</span>
+                                                    <button class="btn btn-secondary" id="record-privacy-key-btn">录制新键位</button>
+                                                </div>
+                                                <small>点击"录制新键位"后按下想要的按键或组合键（如 F9、Ctrl+Shift+M），Esc 取消</small>
+                                            </div>
+
+                                            <div class="setting-item">
+                                                <label>触发动作</label>
+                                                <select id="privacy-action" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px;">
+                                                    <option value="overlay" ${privacySettings.action === 'overlay' ? 'selected' : ''}>暂停并全屏遮罩</option>
+                                                    <option value="overlay_minimize" ${privacySettings.action === 'overlay_minimize' ? 'selected' : ''}>暂停、遮罩并最小化窗口</option>
+                                                </select>
+                                                <small>隐私期间不显示歌曲、歌单等任何信息，再按一次老板键恢复（保持暂停）</small>
+                                            </div>
+
+                                            <div class="setting-item">
+                                                <div class="checkbox-wrapper">
+                                                    <input type="checkbox" id="privacy-content-protection" ${privacySettings.contentProtection ? 'checked' : ''}>
+                                                    <label for="privacy-content-protection">防截屏 / 防投屏（隐私期间窗口在截图和屏幕共享中显示为黑色）</label>
+                                                </div>
+                                            </div>
+
+                                            <div class="setting-actions">
+                                                <button class="btn btn-secondary" id="test-privacy-btn">立即体验</button>
+                                            </div>
+
+                                            <div class="settings-save-section">
+                                                <button class="btn btn-primary" id="save-privacy-btn">保存并应用</button>
                                             </div>
                                         </div>
                                     </div>
@@ -2429,6 +2491,86 @@ class MusicPlayer {
                     if (targetLufsInput) {
                         targetLufsInput.value = -16;
                         targetLufsValue.textContent = '-16 LUFS';
+                    }
+                });
+            }
+
+            // ==================== 隐私与老板键事件绑定 ====================
+            let pendingAccelerator = privacySettings.accelerator;
+            const acceleratorDisplay = dialog.querySelector('#privacy-accelerator-display');
+            const recordKeyBtn = dialog.querySelector('#record-privacy-key-btn');
+            const testPrivacyBtn = dialog.querySelector('#test-privacy-btn');
+            const savePrivacyBtn = dialog.querySelector('#save-privacy-btn');
+
+            // 键位录制：捕获按键并生成 accelerator 字符串
+            if (recordKeyBtn) {
+                recordKeyBtn.addEventListener('click', () => {
+                    recordKeyBtn.textContent = '请按下按键…（Esc 取消）';
+
+                    const onKey = (e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+
+                        if (e.key === 'Escape') {
+                            // 取消录制，恢复原键位显示
+                        } else if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
+                            const parts = [];
+                            if (e.ctrlKey) parts.push('Ctrl');
+                            if (e.altKey) parts.push('Alt');
+                            if (e.shiftKey) parts.push('Shift');
+
+                            let key = e.key;
+                            if (key === ' ') key = 'Space';
+                            if (key.length === 1) key = key.toUpperCase();
+                            parts.push(key);
+
+                            pendingAccelerator = parts.join('+');
+                            if (acceleratorDisplay) {
+                                acceleratorDisplay.textContent = pendingAccelerator;
+                            }
+                        } else {
+                            // 只按了修饰键，继续等待
+                            return;
+                        }
+
+                        recordKeyBtn.textContent = '录制新键位';
+                        document.removeEventListener('keydown', onKey, true);
+                    };
+
+                    document.addEventListener('keydown', onKey, true);
+                });
+            }
+
+            // 立即体验
+            if (testPrivacyBtn) {
+                testPrivacyBtn.addEventListener('click', () => {
+                    dialog.remove();
+                    PrivacyMode.toggle();
+                });
+            }
+
+            // 保存隐私设置
+            if (savePrivacyBtn) {
+                savePrivacyBtn.addEventListener('click', async () => {
+                    try {
+                        const newSettings = {
+                            enabled: dialog.querySelector('#privacy-enabled').checked,
+                            accelerator: pendingAccelerator || 'F9',
+                            action: dialog.querySelector('#privacy-action').value,
+                            contentProtection: dialog.querySelector('#privacy-content-protection').checked
+                        };
+
+                        const result = await electronAPI.privacy.setSettings(newSettings);
+
+                        if (result.success) {
+                            this.showMessage('隐私设置已保存', 'success');
+                            dialog.remove();
+                        } else {
+                            this.showMessage(result.error || '保存失败', 'error');
+                        }
+                    } catch (error) {
+                        logger.error('保存隐私设置失败:', error);
+                        this.showMessage('保存失败: ' + error.message, 'error');
                     }
                 });
             }
@@ -2872,6 +3014,13 @@ class MusicPlayer {
     // 设置全局快捷键
     setupGlobalShortcuts() {
         document.addEventListener('keydown', (e) => {
+            // Ctrl+Shift+H 隐私模式（应用内触发；全局老板键由主进程注册）
+            if (e.ctrlKey && e.shiftKey && e.key === 'H') {
+                e.preventDefault();
+                PrivacyMode.toggle();
+                return;
+            }
+
             // Ctrl+R 刷新界面
             if (e.ctrlKey && e.key === 'r') {
                 e.preventDefault();
@@ -3067,9 +3216,14 @@ let player;
 dom.ready(() => {
     logger.info('开始初始化音乐播放器');
     player = new MusicPlayer();
-    
+
     // 将播放器实例添加到全局作用域，供HTML中的事件处理器使用
     window.player = player;
+
+    // 初始化隐私模式（订阅主进程的老板键事件）
+    if (window.PrivacyMode) {
+        PrivacyMode.init(player);
+    }
 });
 
 

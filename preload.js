@@ -92,6 +92,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
         dragMove: (data) => ipcRenderer.send('lyrics-window-drag-move', data),
         dragEnd: () => ipcRenderer.send('lyrics-window-drag-end')
     },
+
+    // 隐私模式（老板键）
+    privacy: {
+        toggle: () => ipcRenderer.invoke('privacy-toggle'),
+        getSettings: () => ipcRenderer.invoke('privacy-get-settings'),
+        setSettings: (settings) => ipcRenderer.invoke('privacy-set-settings', settings),
+
+        // 主进程推送的隐私状态变化
+        onStateChanged: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('privacy-state-changed', subscription);
+            return () => ipcRenderer.removeListener('privacy-state-changed', subscription);
+        },
+
+        // 老板键注册失败提示
+        onShortcutError: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('privacy-shortcut-error', subscription);
+            return () => ipcRenderer.removeListener('privacy-shortcut-error', subscription);
+        }
+    },
     
     // 工具诊断
     tools: {
