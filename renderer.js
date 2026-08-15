@@ -23,6 +23,23 @@ class MusicPlayer {
         this.currentLyrics = null;
         this.lyricsInterval = null;
 
+        // 倍速 / A-B 复读（听力特性）
+        this.playbackRate = 1;
+        this.loopA = null;
+        this.loopB = null;
+
+        // 随机播放队列
+        this.shuffleOrder = [];
+        this.shufflePosition = -1;
+
+        // 进度条拖拽
+        this.progressDragging = false;
+
+        // 睡眠定时
+        this.sleepTimerId = null;
+        this.sleepTimerMinutes = 0;
+        this.stopAfterEnd = false;
+
         this.initializePlayer();
     }
 
@@ -146,6 +163,20 @@ class MusicPlayer {
         this.bindClick('next-btn', () => this.nextSong());
         this.bindClick('play-mode-btn', () => this.togglePlayMode());
 
+        // 听力特性：倍速 / A-B 复读 / 睡眠定时
+        this.bindClick('speed-btn', (e) => this.showSpeedMenu(e.currentTarget));
+        this.bindClick('ab-btn', () => this.toggleABLoop());
+        this.bindClick('sleep-timer-btn', (e) => this.showSleepTimerMenu(e.currentTarget));
+        this.setupProgressDrag();
+
+        // 点击空白处关闭弹出菜单
+        document.addEventListener('click', (e) => {
+            const menu = document.getElementById('popover-menu');
+            if (menu && !menu.contains(e.target)) {
+                this.closePopoverMenu();
+            }
+        });
+
         // 音量控制
         this.bindClick('volume-btn', () => this.toggleMute());
         const volumeRange = document.getElementById('volume-range');
@@ -243,8 +274,13 @@ class MusicPlayer {
         });
 
         this.audio.addEventListener('timeupdate', () => {
-            this.updateProgress();
+            // 拖拽中不回写进度（避免抖动），其余时间同步
+            if (!this.progressDragging) {
+                this.updateProgress();
+            }
             this.updateTimeDisplay();
+            this.checkABLoop();
+            this.updateABRegion();
             this.updateLyrics();
         });
 
@@ -320,6 +356,7 @@ class MusicPlayer {
 
         this.setVolume(this.volume);
         this.updatePlayModeButtons();
+        this.initPlaybackRate();
     }
 
     // 保存用户设置
@@ -474,6 +511,40 @@ class MusicPlayer {
                 e.preventDefault();
                 this.togglePlay();
             }
+
+            // 听力快捷键（焦点不在输入框时）：←/→ ±5s（Shift ±1s 精听）、↑/↓ 音量、[ ] \ A-B 复读
+            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA' && e.target.tagName !== 'SELECT') {
+                switch (e.key) {
+                    case 'ArrowLeft':
+                        e.preventDefault();
+                        this.seekBy(e.shiftKey ? -1 : -5);
+                        break;
+                    case 'ArrowRight':
+                        e.preventDefault();
+                        this.seekBy(e.shiftKey ? 1 : 5);
+                        break;
+                    case 'ArrowUp':
+                        e.preventDefault();
+                        this.setVolume(this.volume + 5);
+                        break;
+                    case 'ArrowDown':
+                        e.preventDefault();
+                        this.setVolume(this.volume - 5);
+                        break;
+                    case '[':
+                        e.preventDefault();
+                        this.toggleABLoop('setA');
+                        break;
+                    case ']':
+                        e.preventDefault();
+                        this.toggleABLoop('setB');
+                        break;
+                    case '\\':
+                        e.preventDefault();
+                        this.toggleABLoop('clear');
+                        break;
+                }
+            }
         });
     }
 }
@@ -487,7 +558,8 @@ Object.assign(
     window.DownloadUI,
     window.LyricsUI,
     window.ContextMenus,
-    window.DialogsUI
+    window.DialogsUI,
+    window.ListeningUI
 );
 
 // 全局实例

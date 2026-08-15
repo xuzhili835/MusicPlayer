@@ -29,17 +29,22 @@ window.PlayerUI = {
 
         if (!this.currentSong) return;
 
+        // 切歌：清除 A-B 复读区间
+        this.clearABLoopOnSongChange();
+
         try {
             this.audio.src = this.currentSong.path;
             this.audio.load();
 
-            // 应用音量补偿
+            // 应用倍速（变速不变调）与音量补偿
+            this.applyPlaybackRate();
             await this.applyVolumeCompensation();
 
             await this.audio.play();
 
             this.updateCurrentSongInfo();
             this.updateCurrentSongHighlight();
+            this.syncShufflePosition();
 
             // 加载歌词
             await this.loadLyrics(this.currentSong.title);
@@ -64,14 +69,22 @@ window.PlayerUI = {
         if (this.playlist.length === 0) return -1;
 
         switch (this.playMode) {
-            case 'shuffle':
-                // 随机播放（避免重复当前曲目）
-                if (this.playlist.length === 1) return 0;
-                let randomIndex;
-                do {
-                    randomIndex = Math.floor(Math.random() * this.playlist.length);
-                } while (randomIndex === this.currentIndex);
-                return randomIndex;
+            case 'shuffle': {
+                // 随机：沿洗牌队列顺序前进（不重复），一轮播完自动重洗
+                if (!this.shuffleOrder || this.shuffleOrder.length !== this.playlist.length) {
+                    this.rebuildShuffleQueue();
+                    // 把当前位置对齐到队列中的当前曲目
+                    const pos = this.shuffleOrder.indexOf(this.currentIndex);
+                    this.shufflePosition = pos !== -1 ? pos : 0;
+                }
+                let nextPos = this.shufflePosition + 1;
+                if (nextPos >= this.shuffleOrder.length) {
+                    this.rebuildShuffleQueue();
+                    nextPos = 0;
+                }
+                this.shufflePosition = nextPos;
+                return this.shuffleOrder[nextPos];
+            }
 
             case 'single':
             case 'sequence':
@@ -85,14 +98,20 @@ window.PlayerUI = {
         if (this.playlist.length === 0) return -1;
 
         switch (this.playMode) {
-            case 'shuffle':
-                // 随机播放时的上一首也是随机的
-                if (this.playlist.length === 1) return 0;
-                let randomIndex;
-                do {
-                    randomIndex = Math.floor(Math.random() * this.playlist.length);
-                } while (randomIndex === this.currentIndex);
-                return randomIndex;
+            case 'shuffle': {
+                // 随机：沿队列回退，到队头则停在当前
+                if (!this.shuffleOrder || this.shuffleOrder.length !== this.playlist.length) {
+                    this.rebuildShuffleQueue();
+                    const pos = this.shuffleOrder.indexOf(this.currentIndex);
+                    this.shufflePosition = pos !== -1 ? pos : 0;
+                }
+                const prevPos = this.shufflePosition - 1;
+                if (prevPos < 0) {
+                    return this.currentIndex;
+                }
+                this.shufflePosition = prevPos;
+                return this.shuffleOrder[prevPos];
+            }
 
             case 'single':
             case 'sequence':
@@ -122,6 +141,13 @@ window.PlayerUI = {
             } catch (error) {
                 console.error('添加播放历史失败:', error);
             }
+        }
+
+        // 睡眠定时：播完当前内容后停止
+        if (this.stopAfterEnd) {
+            this.setSleepTimer(0);
+            this.updatePlayButton('paused');
+            return;
         }
 
         switch (this.playMode) {
