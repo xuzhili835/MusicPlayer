@@ -53,6 +53,8 @@ music/
 thumbnails/
 lyrics/
 music.db
+sakura-echo.db
+nul
 
 # Temporary files
 *.tmp

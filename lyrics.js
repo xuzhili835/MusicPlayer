@@ -1,12 +1,16 @@
 const fs = require('fs').promises;
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 
 class LyricsManager {
-    constructor(lyricsDir = null, tempDir = null) {
+    constructor(lyricsDir = null, tempDir = null, toolsManager = null) {
         // 如果传入了路径参数则使用，否则使用默认路径（向后兼容）
         this.lyricsDir = lyricsDir || path.join(__dirname, 'lyrics');
         this.tempDir = tempDir || path.join(__dirname, 'temp_downloads');
+        this.toolsManager = toolsManager; // 用于解析 yt-dlp 的真实可执行路径
+        this.subLanguages = ['zh-Hans', 'zh', 'en']; // 按优先级尝试的字幕语言
         this.ensureLyricsDir();
     }
 
@@ -79,17 +83,43 @@ class LyricsManager {
         try {
             const cleanTitle = this.cleanFileName(songTitle);
             const outputTemplate = path.join(this.tempDir, `${cleanTitle}.%(ext)s`);
-            
-            // 尝试下载简体中文字幕
-            const command = `yt-dlp --write-subs --skip-download --sub-lang zh-Hans --output "${outputTemplate}" "${videoUrl}"`;
-            
-            console.log('执行命令:', command);
-            execSync(command, { stdio: 'pipe' });
-            
-            // 查找下载的字幕文件
-            const possibleExtensions = ['zh-Hans.srt', 'zh-Hans.vtt', 'zh-Hans.ass'];
-            
-            for (const ext of possibleExtensions) {
+
+            // 通过工具管理器解析 yt-dlp 真实路径（兼容仅内置 bin 的场景）
+            let ytdlpPath = 'yt-dlp';
+            if (this.toolsManager) {
+                const resolved = await this.toolsManager.getExecutableCommand('yt-dlp');
+                if (resolved) ytdlpPath = resolved;
+            }
+
+            const args = [
+                '--write-subs',
+                '--skip-download',
+                '--sub-lang', this.subLanguages.join(','),
+                '--output', outputTemplate,
+                videoUrl
+            ];
+
+            console.log('下载字幕:', ytdlpPath, args.join(' '));
+            // 数组参数 + execFile，避免 shell 引号问题，且不阻塞主进程
+            await execFileAsync(ytdlpPath, args, { timeout: 60000, windowsHide: true });
+
+            // 按语言优先级查找下载的字幕文件
+            const subtitleFormats = ['srt', 'vtt', 'ass'];
+            for (const lang of this.subLanguages) {
+                for (const ext of subtitleFormats) {
+                    const subtitlePath = path.join(this.tempDir, `${cleanTitle}.${lang}.${ext}`);
+                    try {
+                        await fs.access(subtitlePath);
+                        console.log(`找到字幕文件: ${subtitlePath}`);
+                        return subtitlePath;
+                    } catch (error) {
+                        // 文件不存在，继续寻找
+                    }
+                }
+            }
+
+            // 兜底：查找无语言后缀的字幕文件
+            for (const ext of subtitleFormats) {
                 const subtitlePath = path.join(this.tempDir, `${cleanTitle}.${ext}`);
                 try {
                     await fs.access(subtitlePath);
@@ -99,23 +129,10 @@ class LyricsManager {
                     // 文件不存在，继续寻找
                 }
             }
-            
-            // 如果没有找到中文字幕，尝试其他语言
-            const fallbackExtensions = ['srt', 'vtt', 'ass'];
-            for (const ext of fallbackExtensions) {
-                const subtitlePath = path.join(this.tempDir, `${cleanTitle}.${ext}`);
-                try {
-                    await fs.access(subtitlePath);
-                    console.log(`找到字幕文件: ${subtitlePath}`);
-                    return subtitlePath;
-                } catch (error) {
-                    // 文件不存在，继续寻找
-                }
-            }
-            
+
             return null;
         } catch (error) {
-            console.error('下载字幕失败:', error);
+            console.error('下载字幕失败:', error.message);
             return null;
         }
     }

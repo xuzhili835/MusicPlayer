@@ -1,4 +1,4 @@
-// 页面逻辑 - 待实现
+// 渲染进程主逻辑：播放器控制 + 界面交互
 
 // 音乐播放器主类
 class MusicPlayer {
@@ -109,9 +109,8 @@ class MusicPlayer {
         this.bindClick('window-maximize-btn', () => electronAPI.window.maximize());
         this.bindClick('window-close-btn', () => electronAPI.window.close());
 
-        // 搜索功能
+        // 搜索功能（仅当首次绑定失败时才重试，避免替换输入框导致正在输入的内容丢失）
         if (!this.setupSearchInput()) {
-            // 如果搜索框设置失败，稍后重试
             setTimeout(() => {
                 this.setupSearchInput();
             }, 1000);
@@ -198,61 +197,41 @@ class MusicPlayer {
         this.setupGlobalShortcuts();
     }
 
-    // 设置搜索输入框
+    // 设置搜索输入框（幂等：重复调用不会重复绑定事件）
     setupSearchInput() {
         const searchInput = document.getElementById('search-input');
-        if (searchInput) {
-            // 移除之前的事件监听器（如果有）
-            const newSearchInput = searchInput.cloneNode(true);
-            searchInput.parentNode.replaceChild(newSearchInput, searchInput);
-            
-            // 确保输入框是可交互的
-            newSearchInput.tabIndex = 0;
-            newSearchInput.removeAttribute('contenteditable'); // 移除contenteditable，这可能导致问题
-            
-            // 添加多种事件监听器确保输入功能正常
-            newSearchInput.addEventListener('input', utils.debounce((e) => {
-                if (!e.target || e.target.value === undefined) return;
-                this.handleSearch(e.target.value);
-            }, 300));
-            
-            newSearchInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    if (!e.target || e.target.value === undefined) return;
-                    this.handleSearch(e.target.value);
-                }
-            });
-            
-            // 添加焦点事件处理
-            newSearchInput.addEventListener('focus', () => {
-                console.log('搜索框获得焦点');
-                newSearchInput.classList.add('focused');
-            });
-            
-            newSearchInput.addEventListener('blur', () => {
-                console.log('搜索框失去焦点');
-                newSearchInput.classList.remove('focused');
-            });
-            
-            // 添加点击事件确保焦点正确设置
-            newSearchInput.addEventListener('click', (e) => {
-                e.stopPropagation();
-                if (document.activeElement !== newSearchInput) {
-                    newSearchInput.focus();
-                }
-            });
-            
-            // 添加双击事件全选文本
-            newSearchInput.addEventListener('dblclick', (e) => {
-                e.target.select();
-            });
-            
-            console.log('搜索框事件绑定完成');
-            return true;
-        } else {
+        if (!searchInput) {
             console.warn('搜索框元素未找到');
             return false;
         }
+
+        // 已绑定过则跳过
+        if (searchInput.dataset.bound === 'true') {
+            return true;
+        }
+        searchInput.dataset.bound = 'true';
+        searchInput.tabIndex = 0;
+
+        // 输入搜索（防抖，避免大库下频繁全量重渲造成卡顿）
+        searchInput.addEventListener('input', utils.debounce((e) => {
+            if (!e.target || e.target.value === undefined) return;
+            this.handleSearch(e.target.value);
+        }, 300));
+
+        searchInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                if (!e.target || e.target.value === undefined) return;
+                this.handleSearch(e.target.value);
+            }
+        });
+
+        // 双击全选文本
+        searchInput.addEventListener('dblclick', (e) => {
+            e.target.select();
+        });
+
+        console.log('搜索框事件绑定完成');
+        return true;
     }
 
     // 绑定点击事件的辅助方法
@@ -313,7 +292,7 @@ class MusicPlayer {
     setupDialogEvents() {
         // 下载对话框
         this.bindClick('download-dialog-close', () => this.hideDownloadDialog());
-        this.bindClick('download-cancel-btn', () => this.hideDownloadDialog());
+        this.bindClick('download-cancel-btn', () => this.cancelDownload());
         this.bindClick('download-start-btn', () => this.startDownload());
 
         // 创建歌单对话框
@@ -345,9 +324,17 @@ class MusicPlayer {
             });
         }
 
-        // 空状态按钮
-        this.bindClick('empty-download-btn', () => this.showDownloadDialog());
-        this.bindClick('empty-add-files-btn', () => this.selectLocalFiles());
+        // 空状态按钮（事件委托：空状态内容是动态渲染的）
+        const emptyState = document.getElementById('empty-state');
+        if (emptyState) {
+            emptyState.addEventListener('click', (e) => {
+                if (e.target.id === 'empty-download-btn') {
+                    this.showDownloadDialog();
+                } else if (e.target.id === 'empty-add-files-btn') {
+                    this.selectLocalFiles();
+                }
+            });
+        }
     }
 
     // 设置右键菜单
@@ -582,14 +569,6 @@ class MusicPlayer {
         }
     }
 
-    toggleRepeat() {
-        if (this.playMode === 'repeat') {
-            this.setPlayMode('sequence');
-        } else {
-            this.setPlayMode('repeat');
-        }
-    }
-
     // 音量控制
     setVolume(volume) {
         this.volume = Math.max(0, Math.min(100, volume));
@@ -815,51 +794,47 @@ class MusicPlayer {
     updateAlbumCover(coverElement, song) {
         // 显示加载状态
         coverElement.style.opacity = '0.5';
-        
+
         // 如果有缩略图URL，尝试加载
         if (song.thumbnail) {
-            // 添加加载错误处理
+            // 本地绝对路径需要转成 file:// URL 才能通过 CSP
+            const src = this.resolveMediaUrl(song.thumbnail);
+
             const img = new Image();
-            img.onload = () => {
-                coverElement.src = song.thumbnail;
-                coverElement.style.display = 'block';
-                coverElement.style.opacity = '1';
-                // 移除错误状态
-                coverElement.classList.remove('cover-error');
-            };
-            img.onerror = () => {
-                console.warn('专辑封面加载失败:', song.thumbnail);
-                this.setDefaultAlbumCover(coverElement);
-                // 添加错误状态样式
-                coverElement.classList.add('cover-error');
-                // 如果有多个缩略图源，可以尝试备用URL
-                this.tryAlternativeThumbnail(coverElement, song);
-            };
-            
-            // 设置加载超时
-            setTimeout(() => {
+            const timeoutId = setTimeout(() => {
                 if (coverElement.style.opacity === '0.5') {
                     console.warn('专辑封面加载超时:', song.thumbnail);
                     this.setDefaultAlbumCover(coverElement);
                     coverElement.classList.add('cover-error');
                 }
             }, 5000);
-            
-            img.src = song.thumbnail;
+
+            img.onload = () => {
+                clearTimeout(timeoutId);
+                coverElement.src = src;
+                coverElement.style.display = 'block';
+                coverElement.style.opacity = '1';
+                coverElement.classList.remove('cover-error');
+            };
+            img.onerror = () => {
+                clearTimeout(timeoutId);
+                console.warn('专辑封面加载失败:', song.thumbnail);
+                this.setDefaultAlbumCover(coverElement);
+                coverElement.classList.add('cover-error');
+            };
+
+            img.src = src;
         } else {
             // 没有缩略图，显示默认图标
             this.setDefaultAlbumCover(coverElement);
         }
     }
 
-    // 尝试备用缩略图源
-    tryAlternativeThumbnail(coverElement, song) {
-        // 这里可以实现备用缩略图逻辑
-        // 例如从其他API获取艺术家头像等
-        console.log('尝试获取备用缩略图源...');
-        
-        // 目前先显示默认图标
-        this.setDefaultAlbumCover(coverElement);
+    // 解析媒体地址：本地绝对路径转 file:// URL，网络/data 地址原样返回
+    resolveMediaUrl(src) {
+        if (!src) return null;
+        if (/^(https?|data|blob|file):/i.test(src)) return src;
+        return 'file:///' + String(src).replace(/\\/g, '/').replace(/^\/+/, '');
     }
 
     // 设置默认专辑封面
@@ -1007,35 +982,98 @@ class MusicPlayer {
             this.playlist = songs;
             this.renderSongsList();
             this.updateCurrentViewCount();
-            
+
             // 显示空状态或歌曲列表
-            const emptyState = document.getElementById('empty-state');
-            const songsContainer = document.querySelector('.songs-container');
-            
             if (songs.length === 0) {
-                if (emptyState) emptyState.style.display = 'flex';
-                if (songsContainer) songsContainer.style.display = 'none';
+                this.renderEmptyState('library');
             } else {
-                if (emptyState) emptyState.style.display = 'none';
-                if (songsContainer) songsContainer.style.display = 'block';
+                this.hideEmptyState();
             }
-            
+
         } catch (error) {
             logger.error('加载音乐库失败:', error);
             this.showMessage('加载音乐库失败', 'error');
         }
     }
 
+    // 空状态配置（按视图区分，避免覆写导致文案/按钮错乱）
+    getEmptyStateConfig(type) {
+        const configs = {
+            library: {
+                icon: '🌸',
+                title: '还没有音乐',
+                text: '添加本地音乐文件或从外部下载音源开始您的音乐之旅',
+                slogan: '🌸 声织四季，瓣落成音 🌸',
+                actions: true
+            },
+            recent: {
+                icon: '🕒',
+                title: '还没有播放历史',
+                text: '开始播放歌曲后，这里会显示您最近播放的歌曲',
+                slogan: '',
+                actions: false
+            },
+            search: {
+                icon: '🔍',
+                title: '没有找到匹配的歌曲',
+                text: '换个关键词试试',
+                slogan: '',
+                actions: false
+            },
+            playlist: {
+                icon: '🎵',
+                title: '歌单还是空的',
+                text: '右键歌曲并选择"添加到歌单"，把喜欢的歌收进来',
+                slogan: '',
+                actions: false
+            }
+        };
+        return configs[type] || configs.library;
+    }
+
+    // 渲染空状态（每次按需重建内容）
+    renderEmptyState(type) {
+        const emptyState = document.getElementById('empty-state');
+        if (!emptyState) return;
+
+        const config = this.getEmptyStateConfig(type);
+        emptyState.innerHTML = `
+            <div class="empty-icon">${config.icon}</div>
+            <h3>${config.title}</h3>
+            <p>${config.text}</p>
+            ${config.slogan ? `<div class="empty-slogan">${config.slogan}</div>` : ''}
+            ${config.actions ? `
+            <div class="empty-actions">
+                <button id="empty-download-btn" class="btn btn-primary">下载外部音源</button>
+                <button id="empty-add-files-btn" class="btn btn-secondary">添加本地音乐</button>
+            </div>` : ''}
+        `;
+        emptyState.style.display = 'flex';
+
+        const songsContainer = document.querySelector('.songs-container');
+        if (songsContainer) songsContainer.style.display = 'none';
+    }
+
+    // 隐藏空状态
+    hideEmptyState() {
+        const emptyState = document.getElementById('empty-state');
+        const songsContainer = document.querySelector('.songs-container');
+        if (emptyState) emptyState.style.display = 'none';
+        if (songsContainer) songsContainer.style.display = 'block';
+    }
+
     renderSongsList() {
         const songsList = document.getElementById('songs-list');
         if (!songsList) return;
 
-        songsList.innerHTML = '';
-
+        // DocumentFragment 批量插入，避免逐个 appendChild 造成多次重排
+        const fragment = document.createDocumentFragment();
         this.playlist.forEach((song, index) => {
-            const songItem = this.createSongItem(song, index);
-            songsList.appendChild(songItem);
+            fragment.appendChild(this.createSongItem(song, index));
         });
+
+        songsList.innerHTML = '';
+        songsList.appendChild(fragment);
 
         // 更新计数
         const countElement = document.getElementById('current-view-count');
@@ -1056,8 +1094,8 @@ class MusicPlayer {
 
         item.innerHTML = `
             <div class="song-index">${index + 1}</div>
-            <div class="song-title">${song.title}</div>
-            <div class="song-artist">${song.artist || '未知艺术家'}</div>
+            <div class="song-title">${utils.escapeHtml(song.title)}</div>
+            <div class="song-artist">${utils.escapeHtml(song.artist || '未知艺术家')}</div>
             <div class="song-duration">${utils.formatTime(song.duration)}</div>
         `;
 
@@ -1109,7 +1147,7 @@ class MusicPlayer {
                             <path d="M16 15v5" stroke-width="1.5"/>
                         </svg>
                     </span>
-                    <span class="nav-text">${playlist.name}</span>
+                    <span class="nav-text">${utils.escapeHtml(playlist.name)}</span>
                     <span class="playlist-count">${playlist.song_count || 0}</span>
                 `;
                 
@@ -1155,11 +1193,17 @@ class MusicPlayer {
             this.playlist = songs;
 
             // 更新界面
-            document.getElementById('current-view-title').textContent = playlistName;
+            document.getElementById('current-view-title').textContent = playlistName || '歌单';
             document.getElementById('current-view-count').textContent = `${songs.length} 首歌曲`;
 
             this.renderSongsList();
-            
+
+            if (songs.length === 0) {
+                this.renderEmptyState('playlist');
+            } else {
+                this.hideEmptyState();
+            }
+
         } catch (error) {
             logger.error('切换到歌单失败:', error);
             this.showMessage('加载歌单失败', 'error');
@@ -1240,7 +1284,7 @@ class MusicPlayer {
                 <div class="modal-body">
                     <div class="form-group">
                         <label for="rename-playlist-name">歌单名称:</label>
-                        <input type="text" id="rename-playlist-name" value="${playlist.name}" placeholder="请输入新的歌单名称">
+                        <input type="text" id="rename-playlist-name" value="${utils.escapeHtml(playlist.name)}" placeholder="请输入新的歌单名称">
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1321,7 +1365,7 @@ class MusicPlayer {
     }
 
     async deletePlaylist(playlist) {
-        if (confirm(`确定要删除歌单"${playlist.name}"吗？这将不会删除歌曲文件。删除之后请手动切屏一次，否则无法正常显示`)) {
+        if (confirm(`确定要删除歌单"${playlist.name}"吗？这不会删除歌曲文件。`)) {
             try {
                 await electronAPI.database.removePlaylist(playlist.id);
                 this.showMessage('歌单删除成功', 'success');
@@ -1350,13 +1394,19 @@ class MusicPlayer {
             const results = await electronAPI.database.searchSongs(query);
             this.playlist = results;
             this.renderSongsList();
-            
+
             // 更新视图标题
             const currentViewTitle = document.getElementById('current-view-title');
             const currentViewCount = document.getElementById('current-view-count');
             if (currentViewTitle) currentViewTitle.textContent = '搜索结果';
             if (currentViewCount) currentViewCount.textContent = `${results.length} 首歌曲`;
-            
+
+            if (results.length === 0) {
+                this.renderEmptyState('search');
+            } else {
+                this.hideEmptyState();
+            }
+
         } catch (error) {
             logger.error('搜索失败:', error);
             this.showMessage('搜索失败', 'error');
@@ -1398,30 +1448,18 @@ class MusicPlayer {
         try {
             const songs = await electronAPI.database.getRecentlyPlayed(50);
             this.playlist = songs;
-            
+
             // 更新界面
             document.getElementById('current-view-count').textContent = `${songs.length} 首歌曲`;
             this.renderSongsList();
-            
+
             // 显示空状态（如果没有播放历史）
-            const emptyState = document.getElementById('empty-state');
-            const songsContainer = document.querySelector('.songs-container');
-            
             if (songs.length === 0) {
-                if (emptyState) {
-                    emptyState.style.display = 'flex';
-                    emptyState.innerHTML = `
-                        <div class="empty-icon">🕒</div>
-                        <h3>还没有播放历史</h3>
-                        <p>开始播放歌曲后，这里会显示您最近播放的歌曲</p>
-                    `;
-                }
-                if (songsContainer) songsContainer.style.display = 'none';
+                this.renderEmptyState('recent');
             } else {
-                if (emptyState) emptyState.style.display = 'none';
-                if (songsContainer) songsContainer.style.display = 'block';
+                this.hideEmptyState();
             }
-            
+
         } catch (error) {
             logger.error('加载最近播放失败:', error);
             this.showMessage('加载最近播放失败', 'error');
@@ -1460,6 +1498,18 @@ class MusicPlayer {
         if (dialog) {
             dialog.style.display = 'none';
             this.clearDownloadForm();
+        }
+    }
+
+    // 取消下载（终止后台进程，不再"假取消"）
+    async cancelDownload() {
+        try {
+            await electronAPI.download.cancel();
+            this.showMessage('已取消下载', 'info');
+        } catch (error) {
+            logger.error('取消下载失败:', error);
+        } finally {
+            this.hideDownloadDialog();
         }
     }
 
@@ -1528,6 +1578,12 @@ class MusicPlayer {
             }
         } catch (error) {
             logger.error('下载失败:', error);
+
+            // 用户主动取消：静默处理
+            if (error.message && error.message.includes('取消')) {
+                this.showMessage('已取消下载', 'info');
+                return;
+            }
 
             // 简化错误消息
             let message = error.message;
@@ -1692,7 +1748,9 @@ class MusicPlayer {
     // 歌词功能
     async loadLyrics(songTitle) {
         try {
-            this.currentLyrics = await electronAPI.lyrics.get(songTitle);
+            const result = await electronAPI.lyrics.get(songTitle);
+            // 主进程返回 {success, lyrics: [{time, text}]}，校验为数组再使用
+            this.currentLyrics = (result && result.success && Array.isArray(result.lyrics)) ? result.lyrics : null;
         } catch (error) {
             logger.error('加载歌词失败:', error);
             this.currentLyrics = null;
@@ -1717,7 +1775,7 @@ class MusicPlayer {
     }
 
     updateLyrics() {
-        if (!this.currentLyrics || !this.audio) return;
+        if (!this.currentLyrics || !Array.isArray(this.currentLyrics) || this.currentLyrics.length === 0 || !this.audio) return;
         
         const currentTime = this.audio.currentTime;
         let currentLyric = null;
@@ -1875,16 +1933,16 @@ class MusicPlayer {
 
     async removeFromCurrentPlaylist(songId) {
         if (!this.currentView.startsWith('playlist-')) return;
-        
+
         const playlistId = parseInt(this.currentView.split('-')[1]);
-        
-        if (confirm('确定要从当前歌单中移除这首歌曲吗？移除后请手动切屏一次，否则无法正常显示')) {
+
+        if (confirm('确定要从当前歌单中移除这首歌曲吗？')) {
             try {
                 await electronAPI.database.removeFromPlaylist(playlistId, songId);
                 this.showMessage('歌曲已从歌单中移除', 'success');
-                
-                // 重新加载当前歌单
-                await this.switchToPlaylist(playlistId);
+
+                // 重新加载当前歌单（传入歌单名，避免标题显示 undefined）
+                await this.switchToPlaylist(playlistId, this.currentPlaylistName);
             } catch (error) {
                 logger.error('从歌单移除歌曲失败:', error);
                 this.showMessage('移除失败', 'error');
@@ -1919,7 +1977,7 @@ class MusicPlayer {
                                 ${allPlaylists.map(playlist => `
                                     <label class="playlist-item ${songPlaylistIds.includes(playlist.id) ? 'disabled' : ''}">
                                         <input type="checkbox" value="${playlist.id}" ${songPlaylistIds.includes(playlist.id) ? 'checked disabled' : ''} />
-                                        <span>${playlist.name}</span>
+                                        <span>${utils.escapeHtml(playlist.name)}</span>
                                         <small>${songPlaylistIds.includes(playlist.id) ? '已在歌单中' : ''}</small>
                                     </label>
                                 `).join('')}
@@ -1993,9 +2051,8 @@ class MusicPlayer {
     // 其他功能
     shuffleAll() {
         if (this.playlist.length === 0) return;
-        
-        this.playMode = 'shuffle';
-        this.updateShuffleButton();
+
+        this.setPlayMode('shuffle');
         this.playSong(Math.floor(Math.random() * this.playlist.length));
     }
 
@@ -2012,14 +2069,14 @@ class MusicPlayer {
                     <div class="edit-song-form">
                         <div class="form-group">
                             <label for="edit-song-title">标题:</label>
-                            <input type="text" id="edit-song-title" value="${song.title || ''}" placeholder="请输入歌曲标题">
+                            <input type="text" id="edit-song-title" value="${utils.escapeHtml(song.title || '')}" placeholder="请输入歌曲标题">
                         </div>
                         <div class="form-group">
                             <label for="edit-song-artist">艺术家:</label>
-                            <input type="text" id="edit-song-artist" value="${song.artist || ''}" placeholder="请输入艺术家名称">
+                            <input type="text" id="edit-song-artist" value="${utils.escapeHtml(song.artist || '')}" placeholder="请输入艺术家名称">
                         </div>
                         <div class="form-info">
-                            <p><strong>文件路径:</strong> ${song.path}</p>
+                            <p><strong>文件路径:</strong> ${utils.escapeHtml(song.path)}</p>
                             <p><strong>时长:</strong> ${utils.formatTime(song.duration || 0)}</p>
                         </div>
                     </div>
@@ -2110,11 +2167,11 @@ class MusicPlayer {
                     <div class="song-info">
                         <div class="info-item">
                             <label>标题</label>
-                            <span>${song.title}</span>
+                            <span>${utils.escapeHtml(song.title)}</span>
                         </div>
                         <div class="info-item">
                             <label>艺术家</label>
-                            <span>${song.artist || '未知'}</span>
+                            <span>${utils.escapeHtml(song.artist || '未知')}</span>
                         </div>
                         <div class="info-item">
                             <label>时长</label>
@@ -2126,7 +2183,7 @@ class MusicPlayer {
                         </div>
                         <div class="info-item">
                             <label>文件路径</label>
-                            <span>${song.path}</span>
+                            <span>${utils.escapeHtml(song.path)}</span>
                         </div>
                         <div class="info-item">
                             <label>添加时间</label>
@@ -2263,11 +2320,10 @@ class MusicPlayer {
                                 <!-- 检查控制台面板 -->
                                 <div class="settings-content-panel" id="panel-console">
                                     <div class="console-actions">
-                                        <button id="refresh-ui-btn" class="btn btn-success">刷新界面</button>
+                                        <button id="console-refresh-ui-btn" class="btn btn-success">刷新界面</button>
                                         <button id="check-songs-btn" class="btn btn-primary">检查歌曲文件状态</button>
                                         <button id="clean-missing-btn" class="btn btn-warning">清理缺失文件</button>
                                         <button id="check-ui-btn" class="btn btn-info">检查UI状态</button>
-                                        <button id="reset-search-btn" class="btn btn-warning">重置搜索框</button>
                                         <button id="diagnose-tools-btn" class="btn btn-info">诊断工具状态</button>
                                         <button id="force-download-btn" class="btn btn-warning">强制重新下载工具</button>
                                         <button id="open-devtools-btn" class="btn btn-secondary">打开开发者工具</button>
@@ -2379,11 +2435,10 @@ class MusicPlayer {
 
             // ==================== 检查控制台事件绑定 ====================
             const output = dialog.querySelector('#console-output');
-            const refreshUIBtn = dialog.querySelector('#refresh-ui-btn');
+            const refreshUIBtn = dialog.querySelector('#console-refresh-ui-btn');
             const checkSongsBtn = dialog.querySelector('#check-songs-btn');
             const cleanMissingBtn = dialog.querySelector('#clean-missing-btn');
             const checkUIBtn = dialog.querySelector('#check-ui-btn');
-            const resetSearchBtn = dialog.querySelector('#reset-search-btn');
             const diagnoseToolsBtn = dialog.querySelector('#diagnose-tools-btn');
             const forceDownloadBtn = dialog.querySelector('#force-download-btn');
             const openDevToolsBtn = dialog.querySelector('#open-devtools-btn');
@@ -2411,7 +2466,7 @@ class MusicPlayer {
                         } else {
                             let html = `<p style="color: orange;">⚠️ 发现 ${missingFiles.length} 个缺失文件:</p><ul>`;
                             missingFiles.forEach(file => {
-                                html += `<li>${file.title} - ${file.path}</li>`;
+                                html += `<li>${utils.escapeHtml(file.title)} - ${utils.escapeHtml(file.path)}</li>`;
                             });
                             html += '</ul>';
                             output.innerHTML = html;
@@ -2482,30 +2537,13 @@ class MusicPlayer {
 
                         // 检查播放器状态
                         html += `<p><strong>播放器状态:</strong></p>`;
-                        html += `<p>- 当前歌曲: ${this.currentSong ? this.currentSong.title : '无'}</p>`;
+                        html += `<p>- 当前歌曲: ${utils.escapeHtml(this.currentSong ? this.currentSong.title : '无')}</p>`;
                         html += `<p>- 播放列表长度: ${this.playlist.length}</p>`;
                         html += `<p>- 是否在播放: ${this.isPlaying ? '✅ 是' : '❌ 否'}</p>`;
 
                         output.innerHTML = html;
                     } catch (error) {
-                        output.innerHTML = `<p style="color: red;">❌ UI状态检查失败: ${error.message}</p>`;
-                    }
-                });
-            }
-
-            if (resetSearchBtn) {
-                resetSearchBtn.addEventListener('click', () => {
-                    try {
-                        output.innerHTML = '<p>正在重置搜索框...</p>';
-
-                        // 强制重新设置搜索框
-                        if (this.setupSearchInput()) {
-                            output.innerHTML = '<p style="color: green;">✅ 搜索框重置成功！请尝试点击搜索框输入。</p>';
-                        } else {
-                            output.innerHTML = '<p style="color: red;">❌ 搜索框重置失败，元素未找到。</p>';
-                        }
-                    } catch (error) {
-                        output.innerHTML = `<p style="color: red;">❌ 搜索框重置失败: ${error.message}</p>`;
+                        output.innerHTML = `<p style="color: red;">❌ UI状态检查失败: ${utils.escapeHtml(error.message)}</p>`;
                     }
                 });
             }
@@ -2523,8 +2561,8 @@ class MusicPlayer {
 
                             html += `<div style="margin-bottom: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px;">`;
                             html += `<h5>${tool.toUpperCase()}</h5>`;
-                            html += `<p><strong>工具路径:</strong> ${diagnosis.toolPath || '未知'}</p>`;
-                            html += `<p><strong>平台:</strong> ${diagnosis.platform}</p>`;
+                            html += `<p><strong>工具路径:</strong> ${utils.escapeHtml(diagnosis.toolPath || '未知')}</p>`;
+                            html += `<p><strong>平台:</strong> ${utils.escapeHtml(diagnosis.platform)}</p>`;
                             html += `<p><strong>bin目录存在:</strong> ${diagnosis.binDirExists ? '✅ 是' : '❌ 否'}</p>`;
                             html += `<p><strong>文件存在:</strong> ${diagnosis.fileExists ? '✅ 是' : '❌ 否'}</p>`;
 
@@ -2739,9 +2777,9 @@ class MusicPlayer {
     }
 
     async deleteSong(songId) {
-        if (confirm('确定要删除这首歌曲吗？这将永久删除歌曲文件和数据库记录，无法恢复。删除之后请手动切屏一次，否则无法正常显示')) {
+        if (confirm('确定要删除这首歌曲吗？这将永久删除歌曲文件和数据库记录，无法恢复。')) {
             try {
-                // 如果删除的是当前播放的歌曲，先停止播放避免错误提示
+                // 如果删除的是当前播放的歌曲，先停止播放并释放文件句柄
                 if (this.currentSong && this.currentSong.id === songId) {
                     this.audio.pause();
                     this.audio.src = '';
@@ -2750,37 +2788,24 @@ class MusicPlayer {
                     this.currentIndex = -1;
                     this.updateCurrentSongInfo();
                 }
-                
-                // 调用删除方法
+
+                // 调用删除方法（主进程完整删除：音频文件+缩略图+歌词+数据库记录）
                 const result = await electronAPI.database.removeSong(songId);
-                
-                // 处理删除结果
+
                 if (result && result.success) {
-                    // 在控制台记录详细的删除状态（用于调试）
-                    if (result.fileDeleted) {
-                        console.log('✅ 音频文件已删除');
-                    } else if (result.songPath) {
-                        console.warn('⚠️ 音频文件删除失败或不存在，路径:', result.songPath);
-                    }
-                    
-                    if (result.thumbnailDeleted) {
-                        console.log('✅ 缩略图已删除');
-                    } else if (result.thumbnailPath) {
-                        console.warn('⚠️ 缩略图删除失败或不存在，路径:', result.thumbnailPath);
-                    }
-                    
-                    // 只显示简单的成功提示给用户
                     this.showMessage('歌曲删除成功', 'success');
                 } else {
-                    this.showMessage('歌曲删除成功', 'success');
+                    // 删除失败时如实提示，且不刷新视图
+                    this.showMessage('删除失败: ' + ((result && result.error) || '未知错误'), 'error');
+                    return;
                 }
-                
-                // 重新加载当前视图
-                await this.loadMusicLibrary();
-                
+
+                // 刷新当前视图（保持所在视图，无需手动切屏）
+                await this.refreshCurrentView();
+
                 // 重新加载歌单列表以更新歌曲数量
                 await this.loadPlaylistsToSidebar();
-                
+
             } catch (error) {
                 logger.error('删除歌曲失败:', error);
                 this.showMessage('删除失败: ' + error.message, 'error');
@@ -2835,9 +2860,6 @@ class MusicPlayer {
             // 智能刷新当前视图（会正确处理歌单、最近播放、所有歌曲等）
             await this.refreshCurrentView();
 
-            // 重新设置搜索框（确保输入功能正常）
-            this.setupSearchInput();
-
             logger.info('界面刷新完成');
             this.showMessage('界面刷新成功', 'success');
 
@@ -2855,14 +2877,7 @@ class MusicPlayer {
                 e.preventDefault();
                 this.refreshUI();
             }
-            
-            // Ctrl+Shift+R 重置搜索框
-            if (e.ctrlKey && e.shiftKey && e.key === 'R') {
-                e.preventDefault();
-                this.setupSearchInput();
-                this.showMessage('搜索框已重置', 'info');
-            }
-            
+
             // Ctrl+Shift+I 打开开发者工具
             if (e.ctrlKey && e.shiftKey && e.key === 'I') {
                 e.preventDefault();

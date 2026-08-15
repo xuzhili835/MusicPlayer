@@ -68,6 +68,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     download: {
         bilibiliVideo: (url, options) => ipcRenderer.invoke('download-bilibili-video', url, options),
         getVideoInfo: (url) => ipcRenderer.invoke('download-get-video-info', url),
+        cancel: () => ipcRenderer.invoke('download-cancel'),
 
         // 监听下载进度
         onProgress: (callback) => {
@@ -82,6 +83,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
             ipcRenderer.on('download-stage-progress', subscription);
             return () => ipcRenderer.removeListener('download-stage-progress', subscription);
         }
+    },
+
+    // 桌面歌词窗口专用（歌词窗口内联脚本使用，走事件而非 invoke）
+    desktopLyrics: {
+        close: () => ipcRenderer.send('lyrics-window-close'),
+        dragStart: (data) => ipcRenderer.send('lyrics-window-drag-start', data),
+        dragMove: (data) => ipcRenderer.send('lyrics-window-drag-move', data),
+        dragEnd: () => ipcRenderer.send('lyrics-window-drag-end')
     },
     
     // 工具诊断
@@ -187,6 +196,18 @@ contextBridge.exposeInMainWorld('utils', {
         }
         
         return null;
+    },
+
+    // HTML 转义（防止歌曲/歌单元数据注入 XSS）
+    escapeHtml: (str) => {
+        if (str === null || str === undefined) return '';
+        return String(str).replace(/[&<>"']/g, (c) => ({
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#39;'
+        }[c]));
     },
 
     // 清理文件名

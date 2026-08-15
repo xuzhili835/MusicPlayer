@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Menu } = require('electron')
 const path = require('path');
 const fs = require('fs').promises;
 const fsSync = require('fs');
-const { execSync, spawn } = require('child_process');
+const { spawn } = require('child_process');
 const { parseFile } = require('music-metadata');
 const Database = require('./database.js');
 const LyricsManager = require('./lyrics.js');
@@ -22,11 +22,13 @@ class BiliMusicPlayer {
         this.thumbnailsDir = path.join(userDataPath, 'thumbnails');
         this.lyricsDir = path.join(userDataPath, 'lyrics');
         
-        // 初始化歌词管理器，传入正确的路径
-        this.lyricsManager = new LyricsManager(this.lyricsDir, this.tempDir);
-        
-        // 初始化工具管理器
+        // 初始化歌词管理器，传入正确的路径和工具管理器（解析 yt-dlp 路径）
         this.toolsManager = new ToolsManager();
+        this.lyricsManager = new LyricsManager(this.lyricsDir, this.tempDir, this.toolsManager);
+
+        // 下载进程追踪（用于取消下载）
+        this.downloadProcesses = new Set();
+        this.downloadCancelRequested = false;
         
         console.log('音乐目录:', this.musicDir);
         console.log('临时目录:', this.tempDir);
@@ -489,46 +491,45 @@ class BiliMusicPlayer {
                     <div class="lyrics" id="lyrics-text">♪ 暂无歌词 ♪</div>
                 </div>
                 <script>
-                    const { ipcRenderer } = require('electron');
-                    
+                    // 注意：contextIsolation 环境下没有 require，必须使用 preload 暴露的 API
+                    const lyricsAPI = window.electronAPI ? window.electronAPI.desktopLyrics : null;
+
                     let isDragging = false;
-                    let startX, startY;
-                    
+
                     // 关闭按钮事件
                     document.getElementById('close-btn').addEventListener('click', (e) => {
                         e.stopPropagation();
-                        ipcRenderer.send('lyrics-window-close');
+                        if (lyricsAPI) lyricsAPI.close();
                     });
-                    
+
                     // 拖动功能
                     const lyricsContainer = document.getElementById('lyrics-container');
-                    
+
                     lyricsContainer.addEventListener('mousedown', (e) => {
                         isDragging = true;
-                        startX = e.clientX;
-                        startY = e.clientY;
-                        ipcRenderer.send('lyrics-window-drag-start', {
+                        if (!lyricsAPI) return;
+                        lyricsAPI.dragStart({
                             startX: e.screenX,
                             startY: e.screenY
                         });
                     });
-                    
+
                     document.addEventListener('mousemove', (e) => {
-                        if (isDragging) {
-                            ipcRenderer.send('lyrics-window-drag-move', {
+                        if (isDragging && lyricsAPI) {
+                            lyricsAPI.dragMove({
                                 screenX: e.screenX,
                                 screenY: e.screenY
                             });
                         }
                     });
-                    
+
                     document.addEventListener('mouseup', () => {
                         if (isDragging) {
                             isDragging = false;
-                            ipcRenderer.send('lyrics-window-drag-end');
+                            if (lyricsAPI) lyricsAPI.dragEnd();
                         }
                     });
-                    
+
                     // 防止拖动时选中文字
                     document.addEventListener('selectstart', (e) => {
                         if (isDragging) {
@@ -843,17 +844,6 @@ class BiliMusicPlayer {
             }
         });
 
-        // 播放器控制
-        ipcMain.handle('player-stop-current', async (event, songId) => {
-            try {
-                await this.stopPlayingIfCurrentSong(songId);
-                return { success: true };
-            } catch (error) {
-                console.error('停止播放失败:', error);
-                return { success: false, error: error.message };
-            }
-        });
-
         // 主题设置
         ipcMain.handle('theme-set', async (event, theme) => {
             try {
@@ -1015,6 +1005,34 @@ class BiliMusicPlayer {
             return await this.getVideoInfo(url);
         });
 
+        // 取消下载：终止所有下载相关子进程并清理临时文件
+        ipcMain.handle('download-cancel', async () => {
+            try {
+                this.downloadCancelRequested = true;
+
+                for (const child of this.downloadProcesses) {
+                    try { child.kill(); } catch (e) { /* 进程可能已退出 */ }
+                }
+                this.downloadProcesses.clear();
+
+                // 清理临时文件（仅清理带 _temp 标记的下载残留）
+                try {
+                    const files = await fs.readdir(this.tempDir);
+                    for (const file of files) {
+                        if (file.includes('_temp')) {
+                            await fs.unlink(path.join(this.tempDir, file)).catch(() => {});
+                        }
+                    }
+                } catch (e) { /* 目录不存在等情况忽略 */ }
+
+                console.log('下载已取消');
+                return { success: true };
+            } catch (error) {
+                console.error('取消下载失败:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
         // 歌词功能
         ipcMain.handle('lyrics-download', async (event, url, title) => {
             return await this.lyricsManager.downloadLyrics(url, title);
@@ -1025,7 +1043,12 @@ class BiliMusicPlayer {
         });
 
         ipcMain.handle('lyrics-get', async (event, title) => {
-            return await this.lyricsManager.getLyrics(title);
+            const result = await this.lyricsManager.getLyrics(title);
+            // 渲染进程需要的是 [{time, text}] 数组，这里解析 LRC 原文
+            if (result.success && result.lyrics) {
+                result.lyrics = this.lyricsManager.parseLrcContent(result.lyrics) || [];
+            }
+            return result;
         });
 
         ipcMain.handle('lyrics-delete', async (event, title) => {
@@ -1058,11 +1081,13 @@ class BiliMusicPlayer {
         });
 
         ipcMain.handle('database-delete-song', async (event, songId) => {
-            return await this.database.removeSong(songId);
+            // 完整删除：音频文件 + 缩略图 + 歌词文件 + 数据库记录
+            // 播放停止由渲染进程在调用前自行处理（音频元素在渲染进程）
+            return await this.deleteSongWithFile(songId);
         });
-        
+
         ipcMain.handle('database-remove-song', async (event, songId) => {
-            return await this.database.removeSong(songId);
+            return await this.deleteSongWithFile(songId);
         });
 
         // 播放列表功能
@@ -1769,34 +1794,32 @@ class BiliMusicPlayer {
         try {
             // 使用工具管理器获取正确的可执行路径
             const ytdlpPath = await this.toolsManager.getExecutableCommand('yt-dlp');
-            
+
             if (!ytdlpPath) {
                 const diagnosis = await this.toolsManager.diagnoseToolStatus('yt-dlp');
                 let errorMsg = 'yt-dlp工具不可用。';
-                
+
                 if (diagnosis.issues.length > 0) {
                     errorMsg += '问题：' + diagnosis.issues.join(', ') + '。';
                 }
-                
+
                 if (diagnosis.recommendations.length > 0) {
                     errorMsg += '建议：' + diagnosis.recommendations.join(', ') + '。';
                 }
-                
+
                 throw new Error(errorMsg);
             }
-            
+
             console.log(`使用yt-dlp路径: ${ytdlpPath}`);
-            const command = `"${ytdlpPath}" --dump-json --no-playlist "${url}"`;
-            console.log(`执行命令: ${command}`);
-            
-            const output = execSync(command, { 
-                encoding: 'utf8',
-                timeout: 30000,  // 30秒超时
-                maxBuffer: 1024 * 1024 * 10  // 10MB缓冲区
-            });
-            
-            const videoInfo = JSON.parse(output);
-            
+
+            // 异步执行，不阻塞主进程；数组参数避免 shell 引号问题
+            const stdout = await this.executeCommand(
+                ['yt-dlp', '--dump-json', '--no-playlist', url],
+                { timeout: 30000, maxBuffer: 1024 * 1024 * 10, silent: true }
+            );
+
+            const videoInfo = JSON.parse(stdout);
+
             return {
                 title: videoInfo.title,
                 uploader: videoInfo.uploader,
@@ -1806,15 +1829,19 @@ class BiliMusicPlayer {
             };
         } catch (error) {
             console.error('获取视频信息失败:', error);
-            
+
+            if (this.downloadCancelRequested || error.message === '下载已取消') {
+                throw new Error('下载已取消');
+            }
+
             // 提供更详细的错误信息
             let errorMessage = '获取视频信息失败：';
-            
+
             if (error.message.includes('权限')) {
                 errorMessage += '权限不足，请检查防病毒软件设置。';
             } else if (error.message.includes('不是内部或外部命令')) {
                 errorMessage += 'yt-dlp工具未找到或无法执行。';
-            } else if (error.message.includes('timeout')) {
+            } else if (error.message.includes('timeout') || error.message.includes('超时')) {
                 errorMessage += '请求超时，请检查网络连接。';
             } else if (error.message.includes('Private video')) {
                 errorMessage += '视频是私有的，无法访问。';
@@ -1823,7 +1850,7 @@ class BiliMusicPlayer {
             } else {
                 errorMessage += error.message;
             }
-            
+
             throw new Error(errorMessage);
         }
     }
@@ -1832,6 +1859,9 @@ class BiliMusicPlayer {
     async downloadBilibiliVideo(url, options = {}) {
         try {
             console.log('开始下载视频:', url);
+
+            // 复位取消标志（新一轮下载开始）
+            this.downloadCancelRequested = false;
 
             // 定义总阶段数
             const totalStages = 5;
@@ -1975,6 +2005,11 @@ class BiliMusicPlayer {
         } catch (error) {
             console.error('下载视频失败:', error);
 
+            // 用户主动取消，直接透传
+            if (this.downloadCancelRequested || error.message === '下载已取消') {
+                throw new Error('下载已取消');
+            }
+
             // 提供用户友好的错误信息
             let errorMessage = '下载失败：';
 
@@ -2015,44 +2050,47 @@ class BiliMusicPlayer {
         }
     }
 
-    // 执行命令
-    async executeCommand(command) {
+    // 执行命令（异步、可取消、带超时）
+    // command: ['yt-dlp', ...args]，opts: { timeout, maxBuffer, silent, returnStderr }
+    async executeCommand(command, opts = {}) {
+        const { timeout = 0, maxBuffer = 50 * 1024 * 1024, silent = false, returnStderr = false } = opts;
+
         return new Promise(async (resolve, reject) => {
             try {
                 // 获取工具的实际可执行路径
                 const toolName = command[0];
                 let executablePath = await this.toolsManager.getExecutableCommand(toolName);
-                
+
                 if (!executablePath) {
                     console.log(`工具 ${toolName} 不可用，尝试自动下载...`);
-                    
+
                     try {
                         // 尝试自动下载工具
                         await this.toolsManager.downloadTool(toolName);
                         executablePath = await this.toolsManager.getExecutableCommand(toolName);
-                        
+
                         if (!executablePath) {
                             // 获取诊断信息
                             const diagnosis = await this.toolsManager.diagnoseToolStatus(toolName);
                             let errorMsg = `下载失败：${toolName}工具不可用。`;
-                            
+
                             if (diagnosis.issues.length > 0) {
                                 errorMsg += `问题：${diagnosis.issues.join(', ')}。`;
                             }
-                            
+
                             if (diagnosis.recommendations.length > 0) {
                                 errorMsg += `建议：${diagnosis.recommendations.join(', ')}。`;
                             }
-                            
+
                             // 如果是ffmpeg，提供特殊的错误消息
                             if (toolName === 'ffmpeg') {
                                 errorMsg = '下载失败：ffmpeg工具不可用。请打开"检查控制台"并点击"强制重新下载工具"按钮，然后重试。';
                             }
-                            
+
                             reject(new Error(errorMsg));
                             return;
                         }
-                        
+
                         console.log(`工具 ${toolName} 自动下载成功: ${executablePath}`);
                     } catch (downloadError) {
                         console.error(`自动下载 ${toolName} 失败:`, downloadError);
@@ -2060,45 +2098,78 @@ class BiliMusicPlayer {
                         return;
                     }
                 }
-                
+
                 // 使用实际的可执行路径
                 const actualCommand = [executablePath, ...command.slice(1)];
                 console.log('执行命令:', actualCommand.join(' '));
-                
-                const process = spawn(actualCommand[0], actualCommand.slice(1), {
-                    stdio: ['ignore', 'pipe', 'pipe']
+
+                const child = spawn(actualCommand[0], actualCommand.slice(1), {
+                    stdio: ['ignore', 'pipe', 'pipe'],
+                    windowsHide: true
                 });
-                
+
+                // 注册到下载进程集合（用于取消下载）
+                this.downloadProcesses.add(child);
+
                 let stdout = '';
                 let stderr = '';
-                
-                process.stdout.on('data', (data) => {
+                let killed = false;
+                let timer = null;
+
+                if (timeout > 0) {
+                    timer = setTimeout(() => {
+                        killed = true;
+                        try { child.kill(); } catch (e) { /* 忽略 */ }
+                    }, timeout);
+                }
+
+                child.stdout.on('data', (data) => {
                     stdout += data.toString();
-                    // 发送进度到渲染进程
-                    if (this.mainWindow) {
+                    if (stdout.length > maxBuffer) {
+                        killed = true;
+                        try { child.kill(); } catch (e) { /* 忽略 */ }
+                    }
+                    // 发送进度到渲染进程（dump-json 等静默场景不发送）
+                    if (!silent && this.mainWindow) {
                         this.mainWindow.webContents.send('download-progress', {
                             type: 'stdout',
                             data: data.toString()
                         });
                     }
                 });
-                
-                process.stderr.on('data', (data) => {
+
+                child.stderr.on('data', (data) => {
                     stderr += data.toString();
-                    console.log('Process stderr:', data.toString());
+                    if (stderr.length > maxBuffer) {
+                        killed = true;
+                        try { child.kill(); } catch (e) { /* 忽略 */ }
+                    }
                 });
-                
-                process.on('close', (code) => {
+
+                child.on('close', (code) => {
+                    if (timer) clearTimeout(timer);
+                    this.downloadProcesses.delete(child);
+
+                    if (this.downloadCancelRequested) {
+                        reject(new Error('下载已取消'));
+                        return;
+                    }
+
                     if (code === 0) {
-                        resolve(stdout);
+                        resolve(returnStderr ? { stdout, stderr } : stdout);
+                    } else if (killed && timeout > 0 && code !== 0) {
+                        reject(new Error('命令执行超时'));
                     } else {
                         reject(new Error(`Command failed with code ${code}: ${stderr}`));
                     }
                 });
-                
-                process.on('error', (error) => {
+
+                child.on('error', (error) => {
+                    if (timer) clearTimeout(timer);
+                    this.downloadProcesses.delete(child);
                     reject(error);
                 });
+
             } catch (error) {
                 reject(error);
             }
@@ -2164,18 +2235,16 @@ class BiliMusicPlayer {
             }
 
             // 使用 FFmpeg 的 ebur128 滤镜分析音量
-            // 注意：路径需要加引号以正确处理空格和特殊字符
-            const analysisCommand = `ffmpeg -i "${song.path}" -filter_complex ebur128 -f null -`;
+            // 异步执行（execSync 会阻塞整个主进程，导致界面卡死）
+            const result = await this.executeCommand(
+                ['ffmpeg', '-i', song.path, '-filter_complex', 'ebur128', '-f', 'null', '-'],
+                { maxBuffer: 50 * 1024 * 1024, silent: true, returnStderr: true }
+            );
 
-            console.log('执行音量分析命令:', analysisCommand);
+            // 合并 stdout/stderr（ffmpeg 的 ebur128 输出主要在 stderr）
+            const fullOutput = ((result && result.stdout) || '') + '\n' + ((result && result.stderr) || '');
 
-            // FFmpeg 的 ebur128 输出在 stderr，需要捕获 stderr
-            const output = execSync(analysisCommand + ' 2>&1', {
-                encoding: 'utf8',
-                maxBuffer: 50 * 1024 * 1024 // 50MB buffer
-            });
-
-            console.log('FFmpeg 输出长度:', output.length);
+            console.log('FFmpeg 输出长度:', fullOutput.length);
 
             // 解析 FFmpeg 输出，提取 Integrated loudness 值
             // 格式：
@@ -2187,7 +2256,7 @@ class BiliMusicPlayer {
 
             // 使用更精确的正则表达式匹配 Summary 部分
             const summaryPattern = /Summary:[\s\S]*?Integrated loudness:[\s\S]*?I:\s+([-\d]+\.?\d*)\s+LUFS/is;
-            const match = output.match(summaryPattern);
+            const match = fullOutput.match(summaryPattern);
 
             if (match && match[1]) {
                 integratedLoudness = parseFloat(match[1]);
@@ -2195,12 +2264,12 @@ class BiliMusicPlayer {
             } else {
                 console.error('❌ 正则匹配失败');
                 console.log('--- 调试信息 ---');
-                console.log('包含 Summary:', output.includes('Summary'));
-                console.log('包含 Integrated loudness:', output.includes('Integrated loudness'));
-                console.log('包含 "I:":', output.includes('I:'));
+                console.log('包含 Summary:', fullOutput.includes('Summary'));
+                console.log('包含 Integrated loudness:', fullOutput.includes('Integrated loudness'));
+                console.log('包含 "I:":', fullOutput.includes('I:'));
 
                 // 尝试简单的查找
-                const simpleMatch = output.match(/I:\s+(-?\d+\.?\d*)\s+LUFS/i);
+                const simpleMatch = fullOutput.match(/I:\s+(-?\d+\.?\d*)\s+LUFS/i);
                 if (simpleMatch) {
                     integratedLoudness = parseFloat(simpleMatch[1]);
                     console.log('✓ 简单模式成功:', integratedLoudness);
@@ -2210,7 +2279,7 @@ class BiliMusicPlayer {
             if (integratedLoudness === null || isNaN(integratedLoudness)) {
                 console.error('❌ 无法解析音量分析结果');
                 console.log('--- 输出内容（最后2000字符）---');
-                console.log(output.slice(-2000));
+                console.log(fullOutput.slice(-2000));
                 console.log('--- 输出结束 ---');
                 return {
                     success: false,
@@ -2266,9 +2335,8 @@ class BiliMusicPlayer {
                 path: song.path,
                 thumbnail: song.thumbnail
             });
-            
-            // 检查是否是正在播放的歌曲，如果是则停止播放
-            await this.stopPlayingIfCurrentSong(songId);
+
+            // 播放停止由渲染进程在调用删除前自行处理（音频元素在渲染进程，能释放文件句柄）
             
             // 删除音频文件
             let fileDeleteResult = false;
@@ -2561,43 +2629,6 @@ class BiliMusicPlayer {
         const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.svg'];
         const ext = path.extname(filename).toLowerCase();
         return imageExtensions.includes(ext);
-    }
-
-    // 检查并停止正在播放的歌曲
-    async stopPlayingIfCurrentSong(songId) {
-        try {
-            // 通知渲染进程检查并停止播放
-            if (this.mainWindow) {
-                const isCurrentlyPlaying = await this.mainWindow.webContents.executeJavaScript(`
-                    (function() {
-                        if (window.player && window.player.currentSong && window.player.currentSong.id === ${songId}) {
-                            if (window.player.audio && !window.player.audio.paused) {
-                                window.player.audio.pause();
-                                window.player.audio.src = '';
-                                window.player.audio.load();
-                                console.log('已停止播放要删除的歌曲');
-                                return true;
-                            }
-                            // 清除当前歌曲信息
-                            window.player.currentSong = null;
-                            window.player.currentIndex = -1;
-                            if (window.player.updateCurrentSongInfo) {
-                                window.player.updateCurrentSongInfo();
-                            }
-                        }
-                        return false;
-                    })();
-                `);
-                
-                if (isCurrentlyPlaying) {
-                    console.log('✅ 已停止正在播放的歌曲，释放文件句柄');
-                    // 等待一段时间确保文件句柄被释放
-                    await new Promise(resolve => setTimeout(resolve, 1000));
-                }
-            }
-        } catch (error) {
-            console.warn('停止播放歌曲时出错:', error);
-        }
     }
 
     // 删除缩略图文件

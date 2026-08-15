@@ -68,6 +68,30 @@ class ToolsManager {
                     filename: 'ffmpeg',
                     isArchive: true
                 }
+            },
+            'ffprobe': {
+                windows: {
+                    urls: [
+                        'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip',
+                        'https://ghproxy.com/https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip'
+                    ],
+                    filename: 'ffprobe.exe',
+                    isArchive: true
+                },
+                linux: {
+                    urls: [
+                        'https://johnvansickle.com/ffmpeg/builds/ffmpeg-git-amd64-static.tar.xz'
+                    ],
+                    filename: 'ffprobe',
+                    isArchive: true
+                },
+                darwin: {
+                    urls: [
+                        'https://evermeet.cx/ffmpeg/ffprobe-5.1.2.zip'
+                    ],
+                    filename: 'ffprobe',
+                    isArchive: true
+                }
             }
         };
         
@@ -283,35 +307,55 @@ class ToolsManager {
         });
     }
     
-    // 解压工具
+    // 解压工具（使用 extract-zip，压缩包内可能存在多级目录）
     async extractTool(archivePath, outputPath, toolName) {
-        const AdmZip = require('adm-zip');
-        const zip = new AdmZip(archivePath);
-        const entries = zip.getEntries();
-        
-        // 查找可执行文件
-        let targetEntry = null;
+        const extract = require('extract-zip');
+        const targetName = path.basename(outputPath); // 如 ffmpeg.exe / ffprobe.exe
+        const extractDir = path.join(this.userBinDir, `${toolName}_extracted`);
+
+        // 清理可能残留的解压目录
+        await fs.rm(extractDir, { recursive: true, force: true });
+
+        await extract(archivePath, { dir: extractDir });
+
+        // 递归查找目标可执行文件
+        const foundPath = await this.findFileInDir(extractDir, targetName);
+        if (!foundPath) {
+            throw new Error(`在压缩包中未找到 ${targetName} 可执行文件`);
+        }
+
+        await fs.copyFile(foundPath, outputPath);
+
+        // 清理解压临时目录
+        await fs.rm(extractDir, { recursive: true, force: true });
+
+        console.log(`已解压 ${toolName} 到: ${outputPath}`);
+    }
+
+    // 在目录中递归查找指定文件名的文件
+    async findFileInDir(dir, filename) {
+        let entries;
+        try {
+            entries = await fs.readdir(dir, { withFileTypes: true });
+        } catch (error) {
+            return null;
+        }
+
         for (const entry of entries) {
-            if (entry.entryName.includes(toolName) && !entry.isDirectory) {
-                targetEntry = entry;
-                break;
+            const entryPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                const found = await this.findFileInDir(entryPath, filename);
+                if (found) return found;
+            } else if (entry.name.toLowerCase() === filename.toLowerCase()) {
+                return entryPath;
             }
         }
-        
-        if (!targetEntry) {
-            throw new Error(`在压缩包中未找到 ${toolName} 可执行文件`);
-        }
-        
-        // 提取文件
-        const data = zip.readFile(targetEntry);
-        await fs.writeFile(outputPath, data);
-        
-        console.log(`已解压 ${toolName} 到 ${outputPath}`);
+        return null;
     }
     
     // 自动设置工具（下载缺失的工具）
     async setupTools(onProgress = null) {
-        const tools = ['yt-dlp', 'ffmpeg'];
+        const tools = ['yt-dlp', 'ffmpeg', 'ffprobe'];
         const results = {};
         
         for (const tool of tools) {
