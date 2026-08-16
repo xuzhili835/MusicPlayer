@@ -339,6 +339,17 @@ class MusicPlayer {
                 }
             });
         }
+
+        // 后台下载：全局进度订阅（更新标题栏徽标）+ 徽标取消按钮
+        this.setupDownloadIndicatorListeners();
+        this.bindClick('download-indicator-cancel', () => this.cancelBackgroundDownload());
+
+        // 更新检查：主进程静默检查发现新版本时弹提示
+        if (electronAPI.updater && electronAPI.updater.onUpdateAvailable) {
+            electronAPI.updater.onUpdateAvailable((info) => {
+                this.showUpdateDialog(info);
+            });
+        }
     }
 
     // 加载用户设置
@@ -480,6 +491,42 @@ class MusicPlayer {
             logger.error('界面刷新失败:', error);
             this.showMessage('界面刷新失败: ' + error.message, 'error');
         }
+    }
+
+    // ---------- 更新提示 ----------
+
+    showUpdateDialog(info) {
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.innerHTML = `
+            <div class="modal-content" style="width: 380px;">
+                <div class="modal-header">
+                    <h3>发现新版本</h3>
+                </div>
+                <div class="modal-body">
+                    <p style="font-size: 13.5px; color: var(--text); line-height: 1.7;">
+                        当前版本 v${utils.escapeHtml(info.current)}，最新版本 <strong style="color: var(--accent);">v${utils.escapeHtml(info.remote)}</strong>。
+                    </p>
+                    <p style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">将打开浏览器前往下载页</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" data-role="later">稍后再说</button>
+                    <button class="btn btn-primary" data-role="go">前往下载</button>
+                </div>
+            </div>
+        `;
+
+        overlay.querySelector('[data-role="later"]').addEventListener('click', () => overlay.remove());
+        overlay.querySelector('[data-role="go"]').addEventListener('click', async () => {
+            overlay.remove();
+            try {
+                await electronAPI.file.openExternal(info.url);
+            } catch (error) {
+                logger.error('打开下载页失败:', error);
+            }
+        });
+
+        document.body.appendChild(overlay);
     }
 
     // 设置全局快捷键（应用内）

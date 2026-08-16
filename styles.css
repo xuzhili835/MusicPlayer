@@ -127,6 +127,26 @@ body {
     pointer-events: none;
 }
 
+/* 退出提示：底部居中小字，短暂显示后淡出（鼠标移动时重现） */
+#privacy-exit-hint {
+    position: absolute;
+    bottom: 28px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 12px;
+    color: rgba(230, 232, 238, 0.35);
+    letter-spacing: 0.5px;
+    opacity: 0;
+    transition: opacity 0.6s ease;
+    pointer-events: none;
+    user-select: none;
+    white-space: nowrap;
+}
+
+#privacy-exit-hint.visible {
+    opacity: 1;
+}
+
 html.privacy-on #privacy-overlay {
     display: flex;
 }
@@ -1375,6 +1395,90 @@ input[type="range"]:disabled {
     white-space: nowrap;
 }
 
+/* 下载选项 */
+.download-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--surface-2);
+    border-radius: 10px;
+}
+
+.download-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12.5px;
+    color: var(--text-muted);
+    cursor: pointer;
+    user-select: none;
+}
+
+.download-option:hover {
+    color: var(--text);
+}
+
+.download-option input[type="checkbox"] {
+    width: 15px;
+    height: 15px;
+    accent-color: var(--accent);
+    cursor: pointer;
+}
+
+/* 标题栏后台下载徽标 */
+.download-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 26px;
+    padding: 0 4px 0 10px;
+    margin-right: 6px;
+    border-radius: 13px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 11.5px;
+    font-weight: 600;
+    max-width: 220px;
+    -webkit-app-region: no-drag;
+}
+
+#download-indicator-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.download-indicator svg {
+    animation: indicator-pulse 1.6s ease infinite;
+    flex-shrink: 0;
+}
+
+@keyframes indicator-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
+.indicator-cancel {
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 14px;
+    border-radius: 50%;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.indicator-cancel:hover {
+    background: var(--error-soft);
+    color: var(--error);
+}
+
 /* ---------- 歌曲信息 / 音量详情 ---------- */
 .song-info {
     display: flex;
@@ -1710,6 +1814,19 @@ input[type="range"]:disabled {
 }
 
 /* ---------- 检查控制台 ---------- */
+.console-group-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.7px;
+    color: var(--text-faint);
+    margin: 12px 0 6px;
+}
+
+.console-group-title:first-of-type {
+    margin-top: 0;
+}
+
 .console-actions {
     display: flex;
     flex-wrap: wrap;

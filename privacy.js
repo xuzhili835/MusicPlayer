@@ -1,8 +1,12 @@
 // 隐私模式（老板键）：一键暂停播放 + 全屏不透明遮罩
-// 设计原则：遮罩上不显示任何文字提示（包括"隐私模式已开启"），只保留低对比度 logo
+// 设计原则：遮罩主体不显示任何文字（不做"此地无银三百两"），
+// 仅在底部低调提示退出方法：进入时显示数秒后淡出，鼠标移动时重新出现
 const PrivacyMode = {
     active: false,
     player: null,
+    accelerator: null,      // 当前老板键键位（用于提示文字）
+    _hintTimer: null,       // 淡出定时器
+    _mouseListener: null,   // 鼠标移动重现提示
 
     init(player) {
         this.player = player;
@@ -10,7 +14,10 @@ const PrivacyMode = {
         // 主进程推送的隐私状态变化（老板键在任何应用中触发都会走到这里）
         if (window.electronAPI && electronAPI.privacy && electronAPI.privacy.onStateChanged) {
             electronAPI.privacy.onStateChanged((data) => {
-                this.setState(!!data.active);
+                if (data && typeof data.accelerator !== 'undefined') {
+                    this.accelerator = data.accelerator || null;
+                }
+                this.setState(!!(data && data.active));
             });
 
             // 快捷键注册失败提示
@@ -29,7 +36,6 @@ const PrivacyMode = {
         if (window.electronAPI && electronAPI.privacy) {
             electronAPI.privacy.toggle();
         } else {
-            // 兜底：preload 不可用时直接本地切换
             this.setState(!this.active);
         }
     },
@@ -57,11 +63,47 @@ const PrivacyMode = {
         // 清掉可能残留的消息提示（避免泄露上一条操作内容）
         const container = document.getElementById('message-container');
         if (container) container.innerHTML = '';
+
+        this.showExitHint();
+
+        // 鼠标移动时重新显示退出提示（节流：每次移动重置淡出计时）
+        this._mouseListener = () => this.showExitHint();
+        document.addEventListener('mousemove', this._mouseListener);
     },
 
     exit() {
         // 移除遮罩，保持暂停（不自动续播，由用户手动继续）
         document.documentElement.classList.remove('privacy-on');
+
+        if (this._mouseListener) {
+            document.removeEventListener('mousemove', this._mouseListener);
+            this._mouseListener = null;
+        }
+        this._clearHintTimer();
+    },
+
+    // 底部低调提示退出方法：显示约 4 秒后淡出，鼠标移动时重新出现
+    showExitHint() {
+        const hint = document.getElementById('privacy-exit-hint');
+        if (!hint) return;
+
+        const parts = [];
+        if (this.accelerator) parts.push(this.accelerator);
+        parts.push('Ctrl+Shift+H');
+        hint.textContent = `按 ${parts.join(' 或 ')} 恢复界面`;
+
+        hint.classList.add('visible');
+        this._clearHintTimer();
+        this._hintTimer = setTimeout(() => {
+            hint.classList.remove('visible');
+        }, 4000);
+    },
+
+    _clearHintTimer() {
+        if (this._hintTimer) {
+            clearTimeout(this._hintTimer);
+            this._hintTimer = null;
+        }
     }
 };
 

@@ -21,6 +21,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
         get: () => ipcRenderer.invoke('theme-get')
     },
 
+    // 更新检查
+    updater: {
+        check: () => ipcRenderer.invoke('app-check-update'),
+        onUpdateAvailable: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('update-available', subscription);
+            return () => ipcRenderer.removeListener('update-available', subscription);
+        }
+    },
+
     // 数据库操作
     database: {
         getSongs: () => ipcRenderer.invoke('database-get-songs'),

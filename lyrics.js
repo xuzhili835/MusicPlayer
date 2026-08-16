@@ -96,8 +96,16 @@ class LyricsManager {
                 '--write-subs',
                 '--skip-download',
                 '--sub-lang', this.subLanguages.join(','),
-                '--output', outputTemplate
+                '--output', outputTemplate,
+                // 浏览器 UA（B站风控必需）
+                '--user-agent',
+                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
             ];
+
+            // 站点专属 Referer（规避 B站 412 风控）
+            if (/bilibili\.com|b23\.tv/i.test(videoUrl)) {
+                args.push('--add-headers', 'Referer:https://www.bilibili.com/');
+            }
 
             // 代理（主进程注入，YouTube 场景）
             if (this.proxy) {

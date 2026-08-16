@@ -207,9 +207,12 @@ window.LyricsUI = {
                         <button class="close-btn" aria-label="关闭">×</button>
                     </div>
                     <div class="modal-body">
-                        <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 14px;">
-                            音频转歌词使用本地 AI 模型识别（支持中/英/日等多语言自动检测）。
-                            模型体积较大，<strong>按需选择下载</strong>，随时可删除释放空间。
+                        <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 8px; line-height: 1.6;">
+                            音频转歌词使用本地 AI 模型（whisper）识别，<strong>支持中文、英语、日语、俄语、法语、德语等 99 种语言自动检测</strong>，无需手动选择语言。
+                        </p>
+                        <p style="font-size: 11.5px; color: var(--text-faint); margin-bottom: 14px; line-height: 1.6;">
+                            模型文件较大，<strong>按需选择下载</strong>（默认推荐 Base），随时可删除释放空间。<br>
+                            下载来源：hf-mirror.com / huggingface.co（自动切换），保存到用户数据目录 models 文件夹。
                         </p>
                         <div id="model-list"></div>
                     </div>
@@ -246,8 +249,11 @@ window.LyricsUI = {
                     const isCurrent = model.key === current && model.downloaded;
                     row.innerHTML = `
                         <div style="flex:1; min-width:0;">
-                            <div style="font-size:13px; font-weight:600; color:var(--text);">${model.label}</div>
-                            <div style="font-size:11.5px; color:var(--text-faint); margin-top:2px;">${model.sizeText}${model.downloaded ? ` · 已下载 ${utils.formatFileSize(model.sizeBytes)}` : ''}</div>
+                            <div style="font-size:13px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:7px;">
+                                ${model.label}
+                                ${model.recommended ? '<span style="font-size:10px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:1px 7px; border-radius:8px;">推荐</span>' : ''}
+                            </div>
+                            <div style="font-size:11.5px; color:var(--text-faint); margin-top:2px;">${model.desc || ''} · ${model.sizeText}${model.downloaded ? ` · 已下载 ${utils.formatFileSize(model.sizeBytes)}` : ''}</div>
                             <div class="model-progress-wrap" style="display:none; margin-top:6px;">
                                 <div class="progress-bar-container" style="height:5px;">
                                     <div class="progress-bar"><div class="progress-filled model-progress-bar" style="width:0%"></div></div>

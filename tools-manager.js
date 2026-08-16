@@ -106,19 +106,13 @@ class ToolsManager {
         };
 
         // whisper 语音识别模型（用户按需选择下载，存 userData/models/）
+        // 所有规格均为多语言模型（中/英/日/俄/法/德等 99 种语言自动检测）
+        // 顺序即展示顺序：推荐的 Base 置顶
         this.modelsDir = path.join(userDataPath, 'models');
         this.whisperModels = {
-            tiny: {
-                label: 'Tiny（最快，精度一般）',
-                sizeText: '约 75 MB',
-                urls: [
-                    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
-                    'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
-                ],
-                filename: 'ggml-tiny.bin'
-            },
             base: {
-                label: 'Base（推荐，速度与精度均衡）',
+                label: 'Base',
+                desc: '推荐 · 速度与精度均衡',
                 sizeText: '约 142 MB',
                 urls: [
                     'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
@@ -127,7 +121,8 @@ class ToolsManager {
                 filename: 'ggml-base.bin'
             },
             small: {
-                label: 'Small（精度较高，速度较慢）',
+                label: 'Small',
+                desc: '精度较高，速度较慢',
                 sizeText: '约 466 MB',
                 urls: [
                     'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
@@ -136,13 +131,24 @@ class ToolsManager {
                 filename: 'ggml-small.bin'
             },
             medium: {
-                label: 'Medium（精度最高，很慢，占空间大）',
+                label: 'Medium',
+                desc: '精度最高，很慢，占空间大',
                 sizeText: '约 1.5 GB',
                 urls: [
                     'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin',
                     'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-medium.bin'
                 ],
                 filename: 'ggml-medium.bin'
+            },
+            tiny: {
+                label: 'Tiny',
+                desc: '最快，精度一般（试水用）',
+                sizeText: '约 75 MB',
+                urls: [
+                    'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin',
+                    'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin'
+                ],
+                filename: 'ggml-tiny.bin'
             }
         };
 
@@ -496,6 +502,8 @@ class ToolsManager {
             result[key] = {
                 key,
                 label: config.label,
+                desc: config.desc,
+                recommended: key === 'base',
                 sizeText: config.sizeText,
                 downloaded,
                 sizeBytes

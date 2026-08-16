@@ -33,6 +33,7 @@ class BiliMusicPlayer {
         // 下载进程追踪（用于取消下载）
         this.downloadProcesses = new Set();
         this.downloadCancelRequested = false;
+        this.downloadInProgress = false; // 单任务锁：同时只允许一个下载任务
 
         // 隐私模式（老板键）
         this.privacyActive = false;
@@ -66,6 +67,7 @@ class BiliMusicPlayer {
             this.createMainWindow();
             this.setupIPC();
             await this.initPrivacy();
+            this.scheduleUpdateCheck();
 
             app.on('activate', () => {
                 if (BrowserWindow.getAllWindows().length === 0) {
@@ -187,9 +189,12 @@ class BiliMusicPlayer {
     applyPrivacyState() {
         const active = this.privacyActive;
 
-        // 主窗口：通知渲染进程（暂停播放 + 全屏遮罩）
+        // 主窗口：通知渲染进程（暂停播放 + 全屏遮罩），附带键位用于显示退出提示
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {
-            this.mainWindow.webContents.send('privacy-state-changed', { active });
+            this.mainWindow.webContents.send('privacy-state-changed', {
+                active,
+                accelerator: this.privacySettings.enabled ? this.privacySettings.accelerator : null
+            });
         }
 
         // 桌面歌词窗口：进入隐私时隐藏，退出时恢复
@@ -468,6 +473,8 @@ class BiliMusicPlayer {
             height: 800,
             minWidth: 800,
             minHeight: 600,
+            frame: false, // 无系统标题栏（应用自绘标题栏，避免出现两排窗口控制按钮和白边）
+            // Windows 下 thickFrame 默认为 true，保留系统阴影与边缘拖拽调整大小
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -475,7 +482,7 @@ class BiliMusicPlayer {
             },
             title: 'Sakura Echo - 声织四季，瓣落成音',
             show: false,
-            titleBarStyle: 'default'
+            backgroundColor: '#0e1014' // 防止启动瞬间白闪（与深色主题背景一致）
         });
 
         // 加载HTML文件
@@ -1023,6 +1030,11 @@ class BiliMusicPlayer {
                     error: error.message
                 };
             }
+        });
+
+        // 检查更新（GitHub Releases；网络不通时静默失败）
+        ipcMain.handle('app-check-update', async () => {
+            return await this.checkForUpdates();
         });
 
         // 帮助和关于
@@ -2024,9 +2036,20 @@ class BiliMusicPlayer {
 
     }
 
-    // 获取网络参数（代理 / cookies，用于 B站 与 YouTube 下载）
-    async getNetworkArgs() {
-        const args = [];
+    // 获取网络参数（UA / Referer / 代理 / cookies）
+    // B站对无浏览器特征的请求有风控（HTTP 412），统一伪装浏览器 UA 并按站点补 Referer
+    async getNetworkArgs(url = '') {
+        const args = [
+            '--user-agent',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
+        ];
+
+        if (/bilibili\.com|b23\.tv/i.test(url)) {
+            args.push('--add-headers', 'Referer:https://www.bilibili.com/');
+        } else if (/youtube\.com|youtu\.be/i.test(url)) {
+            args.push('--add-headers', 'Referer:https://www.youtube.com/');
+        }
+
         try {
             const proxy = await this.database.getSetting('download_proxy', '');
             if (proxy && typeof proxy === 'string' && proxy.trim()) {
@@ -2040,6 +2063,89 @@ class BiliMusicPlayer {
             console.warn('读取网络设置失败:', error.message);
         }
         return args;
+    }
+
+    // ==================== 检查更新（GitHub Releases） ====================
+
+    // 比较语义化版本号：a>b 返回 1，a<b 返回 -1，相等返回 0
+    compareVersions(a, b) {
+        const pa = String(a || '').split('.').map(n => parseInt(n, 10) || 0);
+        const pb = String(b || '').split('.').map(n => parseInt(n, 10) || 0);
+        const len = Math.max(pa.length, pb.length);
+        for (let i = 0; i < len; i++) {
+            const x = pa[i] || 0;
+            const y = pb[i] || 0;
+            if (x > y) return 1;
+            if (x < y) return -1;
+        }
+        return 0;
+    }
+
+    // 查询 GitHub 最新 Release（10 秒超时，失败静默）
+    async checkForUpdates() {
+        const https = require('https');
+        const current = require('./package.json').version;
+
+        const fetchJson = (url, redirectsLeft = 3) => new Promise((resolve, reject) => {
+            const req = https.get(url, {
+                headers: {
+                    'User-Agent': 'SakuraEcho-Updater',
+                    'Accept': 'application/vnd.github+json'
+                },
+                timeout: 10000
+            }, (res) => {
+                if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirectsLeft > 0) {
+                    res.resume();
+                    fetchJson(res.headers.location, redirectsLeft - 1).then(resolve, reject);
+                    return;
+                }
+                if (res.statusCode !== 200) {
+                    res.resume();
+                    reject(new Error(`HTTP ${res.statusCode}`));
+                    return;
+                }
+                let body = '';
+                res.on('data', (c) => { body += c; });
+                res.on('end', () => {
+                    try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+                });
+            });
+            req.on('timeout', () => { req.destroy(new Error('网络超时')); });
+            req.on('error', reject);
+        });
+
+        try {
+            const release = await fetchJson('https://api.github.com/repos/xuzhili835/MusicPlayer/releases/latest');
+            const remote = String(release.tag_name || '').replace(/^v/i, '');
+            const hasUpdate = this.compareVersions(remote, current) > 0;
+            return {
+                success: true,
+                hasUpdate,
+                current,
+                remote,
+                url: release.html_url || 'https://github.com/xuzhili835/MusicPlayer/releases',
+                notes: (release.body || '').slice(0, 600)
+            };
+        } catch (error) {
+            console.log('检查更新失败（静默）:', error.message);
+            return { success: false, error: error.message, current, hasUpdate: false };
+        }
+    }
+
+    // 启动后静默检查一次更新（联网时），发现新版本通知渲染进程
+    scheduleUpdateCheck() {
+        setTimeout(async () => {
+            try {
+                const result = await this.checkForUpdates();
+                if (result.success && result.hasUpdate && this.mainWindow && !this.mainWindow.isDestroyed()) {
+                    this.mainWindow.webContents.send('update-available', {
+                        current: result.current,
+                        remote: result.remote,
+                        url: result.url
+                    });
+                }
+            } catch (error) { /* 静默 */ }
+        }, 8000);
     }
 
     // 获取视频信息
@@ -2065,8 +2171,8 @@ class BiliMusicPlayer {
 
             console.log(`使用yt-dlp路径: ${ytdlpPath}`);
 
-            // 异步执行，不阻塞主进程；数组参数避免 shell 引号问题；注入代理/cookies
-            const networkArgs = await this.getNetworkArgs();
+            // 异步执行，不阻塞主进程；数组参数避免 shell 引号问题；注入 UA/Referer/代理/cookies
+            const networkArgs = await this.getNetworkArgs(url);
             const stdout = await this.executeCommand(
                 ['yt-dlp', '--dump-json', '--no-playlist', ...networkArgs, url],
                 { timeout: 30000, maxBuffer: 1024 * 1024 * 10, silent: true }
@@ -2091,7 +2197,11 @@ class BiliMusicPlayer {
             // 提供更详细的错误信息
             let errorMessage = '获取视频信息失败：';
 
-            if (error.message.includes('权限')) {
+            if (error.message.includes('412') || error.message.includes('Precondition Failed')) {
+                errorMessage += '被站点风控拦截（HTTP 412），请稍后重试。';
+            } else if (error.message.includes('403')) {
+                errorMessage += '站点拒绝访问（HTTP 403），可能需要登录或配置 cookies。';
+            } else if (error.message.includes('权限')) {
                 errorMessage += '权限不足，请检查防病毒软件设置。';
             } else if (error.message.includes('不是内部或外部命令')) {
                 errorMessage += 'yt-dlp工具未找到或无法执行。';
@@ -2111,6 +2221,20 @@ class BiliMusicPlayer {
 
     // 下载B站视频
     async downloadBilibiliVideo(url, options = {}) {
+        // 单任务锁：同一时间只允许一个下载任务
+        if (this.downloadInProgress) {
+            throw new Error('已有下载任务正在进行中，请等待完成或先取消');
+        }
+        this.downloadInProgress = true;
+
+        try {
+            return await this._doDownload(url, options);
+        } finally {
+            this.downloadInProgress = false;
+        }
+    }
+
+    async _doDownload(url, options = {}) {
         try {
             console.log('开始下载视频:', url);
 
@@ -2147,8 +2271,8 @@ class BiliMusicPlayer {
             // 临时文件路径
             const tempAudioPath = path.join(this.tempDir, `${cleanTitle}_temp.%(ext)s`);
 
-            // 下载最好质量的音频（注入代理/cookies，YouTube 场景必需）
-            const networkArgs = await this.getNetworkArgs();
+            // 下载最好质量的音频（注入 UA/Referer 规避站点风控，代理/cookies 用于 YouTube）
+            const networkArgs = await this.getNetworkArgs(url);
             const downloadCommand = [
                 'yt-dlp',
                 '--extract-audio',
@@ -2222,8 +2346,8 @@ class BiliMusicPlayer {
 
             // 阶段 4: 下载歌词
             sendStage('正在下载歌词...');
-            // 尝试下载歌词（字幕下载也走代理）
-            if (options.downloadLyrics) {
+            // 按用户选择下载字幕（默认开）
+            if (options.downloadLyrics !== false) {
                 try {
                     const proxy = await this.database.getSetting('download_proxy', '');
                     this.lyricsManager.proxy = (proxy && typeof proxy === 'string') ? proxy.trim() : '';
@@ -2255,6 +2379,34 @@ class BiliMusicPlayer {
             // 阶段 5: 完成
             sendStage('下载完成！', true);
 
+            // 下载后自动 AI 转写（用户勾选且模型就绪时）
+            if (options.autoTranscribe) {
+                try {
+                    const modelKey = await this.database.getSetting('whisper_model', 'base');
+                    if (await this.toolsManager.isWhisperModelDownloaded(modelKey)) {
+                        if (this.mainWindow) {
+                            this.mainWindow.webContents.send('transcribe-status', '下载完成，正在 AI 识别歌词...');
+                        }
+                        this.downloadCancelRequested = false;
+                        const transcribed = await this.transcribeSong(songId);
+                        if (transcribed && transcribed.success && transcribed.lrc) {
+                            await this.lyricsManager.saveLyrics(videoInfo.title, transcribed.lrc);
+                            if (this.mainWindow) {
+                                this.mainWindow.webContents.send('transcribe-status', 'AI 歌词识别完成');
+                            }
+                            console.log('自动 AI 转写完成:', videoInfo.title);
+                        }
+                    } else {
+                        console.log('自动转写跳过：模型未下载');
+                        if (this.mainWindow) {
+                            this.mainWindow.webContents.send('transcribe-status', '模型未下载，已跳过 AI 转写');
+                        }
+                    }
+                } catch (transcribeError) {
+                    console.log('自动 AI 转写失败（不影响下载结果）:', transcribeError.message);
+                }
+            }
+
             return {
                 success: true,
                 song: { ...songData, id: songId }
@@ -2271,7 +2423,11 @@ class BiliMusicPlayer {
             // 提供用户友好的错误信息
             let errorMessage = '下载失败：';
 
-            if (error.message.includes('ffmpeg')) {
+            if (error.message.includes('412') || error.message.includes('Precondition Failed')) {
+                errorMessage += '被站点风控拦截（HTTP 412）。请稍后重试；若反复出现，可在设置中配置代理。';
+            } else if (error.message.includes('403')) {
+                errorMessage += '站点拒绝访问（HTTP 403），可能需要登录。可在设置 → 网络与下载 中配置 cookies.txt。';
+            } else if (error.message.includes('ffmpeg')) {
                 errorMessage += 'ffmpeg工具不可用。请打开"检查控制台"并点击"强制重新下载工具"按钮，然后重试。';
             } else if (error.message.includes('yt-dlp')) {
                 errorMessage += 'yt-dlp工具不可用。请打开"检查控制台"并点击"强制重新下载工具"按钮，然后重试。';

@@ -310,6 +310,7 @@ window.DialogsUI = {
                                 <div class="settings-nav-item" data-panel="privacy">隐私与老板键</div>
                                 <div class="settings-nav-item" data-panel="network">网络与下载</div>
                                 <div class="settings-nav-item" data-panel="ai">AI 歌词识别</div>
+                                <div class="settings-nav-item" data-panel="about">关于与更新</div>
                                 <div class="settings-nav-item" data-panel="console">检查控制台</div>
                             </div>
                             <div class="settings-content">
@@ -388,7 +389,7 @@ window.DialogsUI = {
                                                     <option value="overlay" ${privacySettings.action === 'overlay' ? 'selected' : ''}>暂停并全屏遮罩</option>
                                                     <option value="overlay_minimize" ${privacySettings.action === 'overlay_minimize' ? 'selected' : ''}>暂停、遮罩并最小化窗口</option>
                                                 </select>
-                                                <small>隐私期间不显示任何信息，再按一次老板键恢复（保持暂停）</small>
+                                                <small>触发后立即暂停播放并遮罩全部信息；若桌面歌词窗口是打开状态会一并隐藏，退出隐私模式后自动恢复显示</small>
                                             </div>
 
                                             <div class="setting-actions">
@@ -444,18 +445,45 @@ window.DialogsUI = {
                                     </div>
                                 </div>
 
+                                <!-- 关于与更新面板 -->
+                                <div class="settings-content-panel" id="panel-about">
+                                    <div class="settings-section">
+                                        <div class="settings-group">
+                                            <div class="setting-item">
+                                                <label>当前版本</label>
+                                                <span style="font-size: 15px; font-weight: 700; color: var(--accent);">${versionText}</span>
+                                            </div>
+                                            <div class="setting-item">
+                                                <label>检查更新</label>
+                                                <small>启动联网时会自动检查一次（静默，仅在有新版本时提示）。也可立即手动检查。</small>
+                                            </div>
+                                            <div class="setting-actions">
+                                                <button class="btn btn-primary" id="check-update-btn">立即检查更新</button>
+                                            </div>
+                                            <div id="update-result" style="display:none; font-size: 12.5px; line-height: 1.7; color: var(--text-muted); background: var(--surface-2); border-radius: 8px; padding: 10px 12px;"></div>
+                                        </div>
+                                    </div>
+                                </div>
+
                                 <!-- 检查控制台面板 -->
                                 <div class="settings-content-panel" id="panel-console">
+                                    <div class="console-group-title">界面</div>
                                     <div class="console-actions">
                                         <button id="console-refresh-ui-btn" class="btn btn-success">刷新界面</button>
+                                        <button id="check-ui-btn" class="btn btn-info">检查UI状态</button>
+                                    </div>
+                                    <div class="console-group-title">文件</div>
+                                    <div class="console-actions">
                                         <button id="check-songs-btn" class="btn btn-primary">检查文件状态</button>
                                         <button id="clean-missing-btn" class="btn btn-warning">清理缺失文件</button>
-                                        <button id="check-ui-btn" class="btn btn-info">检查UI状态</button>
+                                    </div>
+                                    <div class="console-group-title">工具</div>
+                                    <div class="console-actions">
                                         <button id="diagnose-tools-btn" class="btn btn-info">诊断工具状态</button>
                                         <button id="force-download-btn" class="btn btn-warning">强制重新下载工具</button>
                                         <button id="open-devtools-btn" class="btn btn-secondary">打开开发者工具</button>
                                     </div>
-                                    <div id="console-output" class="console-output"></div>
+                                    <div id="console-output" class="console-output"><p style="color: var(--text-faint);">尚无输出，点击上方按钮执行检查</p></div>
                                 </div>
                             </div>
                         </div>
@@ -684,7 +712,50 @@ window.DialogsUI = {
                 });
             }
 
+            // ==================== 关于与更新事件绑定 ====================
+            const checkUpdateBtn = dialog.querySelector('#check-update-btn');
+            const updateResult = dialog.querySelector('#update-result');
+            if (checkUpdateBtn) {
+                checkUpdateBtn.addEventListener('click', async () => {
+                    checkUpdateBtn.disabled = true;
+                    if (updateResult) {
+                        updateResult.style.display = 'block';
+                        updateResult.textContent = '正在检查更新...';
+                    }
+                    try {
+                        const result = await electronAPI.updater.check();
+                        if (updateResult) {
+                            if (!result.success) {
+                                updateResult.innerHTML = `<span style="color: var(--warning);">⚠ 检查失败</span>：${utils.escapeHtml(result.error || '网络问题')}（可稍后重试）`;
+                            } else if (result.hasUpdate) {
+                                updateResult.innerHTML = `<span style="color: var(--success);">✓ 发现新版本</span> v${utils.escapeHtml(result.remote)}（当前 v${utils.escapeHtml(result.current)}）<br><button class="btn btn-primary" id="go-download-page" style="margin-top:8px;">前往下载</button>`;
+                                const goBtn = updateResult.querySelector('#go-download-page');
+                                if (goBtn) {
+                                    goBtn.addEventListener('click', async () => {
+                                        try { await electronAPI.file.openExternal(result.url); } catch (e) { /* 忽略 */ }
+                                    });
+                                }
+                            } else {
+                                updateResult.innerHTML = `<span style="color: var(--success);">✓ 已是最新版本</span>（v${utils.escapeHtml(result.current)}）`;
+                            }
+                        }
+                    } catch (error) {
+                        if (updateResult) {
+                            updateResult.innerHTML = `<span style="color: var(--warning);">⚠ 检查失败</span>：${utils.escapeHtml(error.message)}`;
+                        }
+                    } finally {
+                        checkUpdateBtn.disabled = false;
+                    }
+                });
+            }
+
             // ==================== 检查控制台事件绑定 ====================
+            // 输出带时间戳的分隔头，让多条结果可区分
+            const consoleHeader = (title) => {
+                const time = new Date().toLocaleTimeString();
+                return `<p style="color: var(--text-faint); margin:10px 0 4px; border-top:1px solid var(--border); padding-top:8px;">── ${time} · ${title} ──</p>`;
+            };
+
             const output = dialog.querySelector('#console-output');
             const refreshUIBtn = dialog.querySelector('#console-refresh-ui-btn');
             const checkSongsBtn = dialog.querySelector('#check-songs-btn');
@@ -696,7 +767,7 @@ window.DialogsUI = {
 
             if (refreshUIBtn) {
                 refreshUIBtn.addEventListener('click', async () => {
-                    output.innerHTML = '<p>正在刷新界面...</p>';
+                    output.innerHTML = consoleHeader('刷新界面') + '<p>正在刷新界面...</p>';
                     try {
                         await this.refreshUI();
                         output.innerHTML = '<p style="color: var(--success);">✅ 界面刷新成功！</p>';
@@ -709,7 +780,7 @@ window.DialogsUI = {
             if (checkSongsBtn) {
                 checkSongsBtn.addEventListener('click', async () => {
                     try {
-                        output.innerHTML = '<p>正在检查文件状态...</p>';
+                        output.innerHTML = consoleHeader('检查文件状态') + '<p>正在检查文件状态...</p>';
                         const missingFiles = await electronAPI.file.checkSongsStatus();
 
                         if (missingFiles.length === 0) {
@@ -740,7 +811,7 @@ window.DialogsUI = {
                     if (!confirmed) return;
 
                     try {
-                        output.innerHTML = '<p>正在清理缺失文件...</p>';
+                        output.innerHTML = consoleHeader('清理缺失文件') + '<p>正在清理缺失文件...</p>';
                         const result = await electronAPI.file.cleanMissingSongs();
 
                         output.innerHTML = `<p style="color: var(--success);">✅ 清理完成！共清理了 ${result.cleanedCount} 个缺失文件记录。</p>`;
@@ -770,7 +841,7 @@ window.DialogsUI = {
                         const searchInput = document.getElementById('search-input');
                         const audioPlayer = document.getElementById('audio-player');
 
-                        let html = '<h4>UI状态检查结果:</h4>';
+                        let html = consoleHeader('检查UI状态') + '<h4>UI状态检查结果:</h4>';
 
                         if (searchInput) {
                             html += `<p><strong>搜索框:</strong> ✅ 存在</p>`;
@@ -803,7 +874,7 @@ window.DialogsUI = {
             if (diagnoseToolsBtn) {
                 diagnoseToolsBtn.addEventListener('click', async () => {
                     try {
-                        output.innerHTML = '<p>正在诊断工具状态...</p>';
+                        output.innerHTML = consoleHeader('诊断工具状态') + '<p>正在诊断工具状态...</p>';
 
                         const tools = ['yt-dlp', 'ffmpeg'];
                         let html = '<h4>工具诊断结果:</h4>';
@@ -853,7 +924,7 @@ window.DialogsUI = {
             if (forceDownloadBtn) {
                 forceDownloadBtn.addEventListener('click', async () => {
                     try {
-                        output.innerHTML = '<p>正在强制重新下载工具...</p>';
+                        output.innerHTML = consoleHeader('强制重新下载工具') + '<p>正在强制重新下载工具...</p>';
 
                         const tools = ['yt-dlp', 'ffmpeg'];
                         let html = '<h4>强制重新下载结果:</h4>';

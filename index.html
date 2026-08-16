@@ -27,6 +27,15 @@
             </div>
         </div>
         <div class="title-bar-right">
+            <div id="download-indicator" class="download-indicator" style="display: none;" title="后台下载中">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="7,10 12,15 17,10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                </svg>
+                <span id="download-indicator-text">下载中</span>
+                <button id="download-indicator-cancel" class="indicator-cancel" title="取消下载" aria-label="取消下载">×</button>
+            </div>
             <button id="theme-toggle-btn" class="icon-btn header-btn" title="切换主题" aria-label="切换主题">
                 <svg class="icon-sun" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="12" r="5"/>
@@ -345,6 +354,16 @@
                         <span id="download-stage" class="download-stage-badge" style="display: none;">1/5</span>
                     </div>
                 </div>
+                <div class="download-options">
+                    <label class="download-option">
+                        <input type="checkbox" id="opt-download-lyrics" checked>
+                        <span>下载字幕 / 歌词（若可用）</span>
+                    </label>
+                    <label class="download-option">
+                        <input type="checkbox" id="opt-auto-transcribe">
+                        <span>下载后 AI 识别歌词（需已下载模型）</span>
+                    </label>
+                </div>
             </div>
             <div class="modal-footer">
                 <button id="download-cancel-btn" class="btn btn-secondary">取消</button>
@@ -381,6 +400,7 @@
     <!-- 隐私模式遮罩（老板键触发：全屏不透明，不显示任何信息） -->
     <div id="privacy-overlay" aria-hidden="true">
         <div id="privacy-overlay-logo"></div>
+        <div id="privacy-exit-hint"></div>
     </div>
 
     <!-- 消息提示 -->
