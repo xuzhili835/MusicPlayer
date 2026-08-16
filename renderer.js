@@ -111,11 +111,8 @@ class MusicPlayer {
         this.bindClick('window-maximize-btn', () => electronAPI.window.maximize());
         this.bindClick('window-close-btn', () => electronAPI.window.close());
 
-        // 隐私模式按钮（老板键的应用内入口）
+        // 隐私模式按钮（头部，与随机播放并排）
         this.bindClick('privacy-btn', () => PrivacyMode.toggle());
-
-        // 主题切换
-        this.bindClick('theme-toggle-btn', () => this.toggleTheme());
 
         // 搜索功能（仅当首次绑定失败时才重试）
         if (!this.setupSearchInput()) {
@@ -145,6 +142,9 @@ class MusicPlayer {
                         case 'lyrics-window-btn':
                             this.toggleLyricsWindow();
                             break;
+                        case 'theme-toggle-btn':
+                            this.toggleTheme();
+                            break;
                         case 'settings-btn':
                             this.showSettingsDialog();
                             break;
@@ -164,9 +164,11 @@ class MusicPlayer {
         this.bindClick('play-mode-btn', () => this.togglePlayMode());
 
         // 听力特性：倍速 / A-B 复读 / 睡眠定时
-        this.bindClick('speed-btn', (e) => this.showSpeedMenu(e.currentTarget));
+        // 注意 stopPropagation：点击事件若冒泡到 document 的弹出菜单关闭器，
+        // 菜单刚打开就会被立即关掉（表现为"点了没反应"）
+        this.bindClick('speed-btn', (e) => { e.stopPropagation(); this.showSpeedMenu(e.currentTarget); });
         this.bindClick('ab-btn', () => this.toggleABLoop());
-        this.bindClick('sleep-timer-btn', (e) => this.showSleepTimerMenu(e.currentTarget));
+        this.bindClick('sleep-timer-btn', (e) => { e.stopPropagation(); this.showSleepTimerMenu(e.currentTarget); });
         this.setupProgressDrag();
 
         // 点击空白处关闭弹出菜单
