@@ -276,10 +276,11 @@ window.DialogsUI = {
                 console.error('获取隐私设置失败:', error);
             }
 
+            // 顺序与主进程 privacyActions 一致：从常规到极端
             const actionNames = {
                 overlay: '暂停并全屏遮罩',
-                audio_only: '继续播放，只遮住屏幕',
-                overlay_minimize: '暂停、遮罩并最小化',
+                overlay_minimize: '暂停、遮罩并最小化窗口',
+                audio_only: '继续播放，只遮住屏幕（戴耳机时用）',
                 quit: '直接退出应用'
             };
 

@@ -44,10 +44,11 @@ class BiliMusicPlayer {
         this.privacyMinimize = false;    // 当前隐私会话是否最小化窗口
         this.lyricsWindowWasVisible = false; // 进入隐私模式时桌面歌词窗口是否可见
         // 隐私动作定义（键位绑定与标题栏按钮共用）
+        // 顺序即设置面板展示顺序：从常规到极端（暂停系 → 继续播放 → 退出垫底）
         this.privacyActions = {
             overlay: '暂停并全屏遮罩',
-            audio_only: '继续播放，只遮住屏幕',
             overlay_minimize: '暂停、遮罩并最小化窗口',
+            audio_only: '继续播放，只遮住屏幕（戴耳机时用）',
             quit: '直接退出应用'
         };
         this.privacySettings = {
