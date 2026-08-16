@@ -40,11 +40,26 @@ class BiliMusicPlayer {
 
         // 隐私模式（老板键）
         this.privacyActive = false;
+        this.privacyKeepAudio = false;   // 当前隐私会话是否保持播放（audio_only 模式）
+        this.privacyMinimize = false;    // 当前隐私会话是否最小化窗口
         this.lyricsWindowWasVisible = false; // 进入隐私模式时桌面歌词窗口是否可见
+        // 隐私动作定义（键位绑定与标题栏按钮共用）
+        this.privacyActions = {
+            overlay: '暂停并全屏遮罩',
+            audio_only: '继续播放，只遮住屏幕',
+            overlay_minimize: '暂停、遮罩并最小化窗口',
+            quit: '直接退出应用'
+        };
         this.privacySettings = {
             enabled: true,
-            accelerator: 'F9',      // 老板键默认键位
-            action: 'overlay'       // 'overlay' | 'overlay_minimize'
+            // 每种动作独立键位（空串 = 不绑定），可任意组合
+            keys: {
+                overlay: 'F9',
+                overlay_minimize: '',
+                audio_only: '',
+                quit: ''
+            },
+            toolbarAction: 'overlay' // 标题栏隐私按钮的动作
         };
         
         console.log('音乐目录:', this.musicDir);
@@ -141,72 +156,143 @@ class BiliMusicPlayer {
 
     // ==================== 隐私模式（老板键） ====================
 
-    // 初始化隐私模式：加载设置并注册全局快捷键
+    // 初始化隐私模式：加载设置（含旧格式迁移）并注册全局快捷键
     async initPrivacy() {
         try {
             const saved = await this.database.getSetting('privacy_settings', null);
             if (saved && typeof saved === 'object') {
                 this.privacySettings = { ...this.privacySettings, ...saved };
+                // 旧格式迁移：{accelerator, action} → keys 多键位格式
+                if (!this.privacySettings.keys && this.privacySettings.accelerator) {
+                    const action = this.privacySettings.action || 'overlay';
+                    this.privacySettings.keys = { overlay: '', overlay_minimize: '', audio_only: '', quit: '' };
+                    this.privacySettings.keys[action] = this.privacySettings.accelerator;
+                    delete this.privacySettings.accelerator;
+                    delete this.privacySettings.action;
+                    console.log('隐私设置已迁移为多键位格式');
+                }
+                if (!this.privacySettings.keys) {
+                    this.privacySettings.keys = { overlay: 'F9', overlay_minimize: '', audio_only: '', quit: '' };
+                }
             }
 
-            const ok = this.applyPrivacyShortcut();
-            if (!ok && this.mainWindow) {
-                this.mainWindow.webContents.send('privacy-shortcut-error', {
-                    message: `老板键 ${this.privacySettings.accelerator} 注册失败（可能被其他程序占用），可在设置中修改键位`
-                });
-            }
+            this.applyPrivacyShortcuts();
         } catch (error) {
             console.error('初始化隐私模式失败:', error);
         }
     }
 
-    // 注册/重新注册老板键全局快捷键，返回是否成功
-    applyPrivacyShortcut() {
+    // 注册/重新注册全部老板键（每个动作独立键位，空 = 不绑定）
+    applyPrivacyShortcuts() {
         try {
-            // 先清掉旧注册
             try { globalShortcut.unregisterAll(); } catch (e) { /* 忽略 */ }
 
             if (!this.privacySettings.enabled) {
                 return true;
             }
 
-            const accelerator = this.privacySettings.accelerator || 'F9';
-            const ok = globalShortcut.register(accelerator, () => this.togglePrivacy());
-            if (!ok) {
-                console.warn(`老板键 ${accelerator} 注册失败`);
+            const keys = this.privacySettings.keys || {};
+            let allOk = true;
+
+            for (const [action, accelerator] of Object.entries(keys)) {
+                if (!accelerator || typeof accelerator !== 'string' || !accelerator.trim()) continue;
+                const ok = globalShortcut.register(accelerator.trim(), () => this.triggerPrivacy(action));
+                if (!ok) {
+                    allOk = false;
+                    console.warn(`老板键 ${accelerator}（${this.privacyActions[action] || action}）注册失败`);
+                    if (this.mainWindow) {
+                        this.mainWindow.webContents.send('privacy-shortcut-error', {
+                            message: `快捷键 ${accelerator.trim()} 注册失败（可能被其他程序占用），请在设置中修改`
+                        });
+                    }
+                }
             }
-            return ok;
+
+            return allOk;
         } catch (error) {
             console.error('注册老板键失败:', error);
             return false;
         }
     }
 
-    // 切换隐私模式
-    togglePrivacy() {
-        // 动作为"直接退出"：老板键 = 立即退出应用（不进入遮罩状态）
-        if (!this.privacyActive && this.privacySettings.action === 'quit') {
-            console.log('老板键：直接退出应用');
-            this.isQuitting = true;
-            app.quit();
+    // 校验并规范化隐私设置
+    normalizePrivacySettings(settings) {
+        if (!settings || typeof settings !== 'object') return null;
+
+        const normalized = { ...this.privacySettings, ...settings };
+        normalized.enabled = !!normalized.enabled;
+        normalized.toolbarAction = this.privacyActions[normalized.toolbarAction] ? normalized.toolbarAction : 'overlay';
+
+        // 键位：只保留合法动作，去重（同一键不能绑两个动作，先到先得）
+        const rawKeys = normalized.keys || {};
+        normalized.keys = { overlay: '', overlay_minimize: '', audio_only: '', quit: '' };
+        const used = new Set();
+        for (const action of Object.keys(normalized.keys)) {
+            let acc = (rawKeys[action] || '').trim();
+            if (acc && !used.has(acc.toLowerCase())) {
+                normalized.keys[action] = acc;
+                used.add(acc.toLowerCase());
+            }
+        }
+        return normalized;
+    }
+
+    // 触发隐私动作（老板键 / 标题栏按钮统一入口）
+    triggerPrivacy(action) {
+        // 遮罩状态下再按任一遮罩类老板键 = 恢复界面
+        if (this.privacyActive) {
+            this.privacyActive = false;
+            this.applyPrivacyState();
             return;
         }
 
-        this.privacyActive = !this.privacyActive;
+        switch (action) {
+            case 'quit':
+                console.log('隐私动作：直接退出应用');
+                this.isQuitting = true;
+                app.quit();
+                return;
+            case 'audio_only':
+                this.privacyActive = true;
+                this.privacyKeepAudio = true;   // 继续播放
+                this.privacyMinimize = false;
+                break;
+            case 'overlay_minimize':
+                this.privacyActive = true;
+                this.privacyKeepAudio = false;  // 暂停
+                this.privacyMinimize = true;
+                break;
+            case 'overlay':
+            default:
+                this.privacyActive = true;
+                this.privacyKeepAudio = false;  // 暂停
+                this.privacyMinimize = false;
+                break;
+        }
+
         this.applyPrivacyState();
     }
 
     // 应用隐私状态到所有窗口
     applyPrivacyState() {
         const active = this.privacyActive;
-        const keepAudio = this.privacySettings.action === 'audio_only'; // 继续播放、只遮屏
+        const keepAudio = active && this.privacyKeepAudio;
+
+        // 提示文字用第一个绑定的遮罩类键位
+        let hintAccelerator = null;
+        if (this.privacySettings.enabled) {
+            const keys = this.privacySettings.keys || {};
+            for (const k of ['overlay', 'overlay_minimize', 'audio_only']) {
+                if (keys[k]) { hintAccelerator = keys[k]; break; }
+            }
+        }
 
         // 主窗口：通知渲染进程（暂停播放 + 全屏遮罩），附带键位用于显示退出提示
         if (this.mainWindow && !this.mainWindow.isDestroyed()) {
             this.mainWindow.webContents.send('privacy-state-changed', {
                 active,
                 keepAudio,
-                accelerator: this.privacySettings.enabled ? this.privacySettings.accelerator : null
+                accelerator: hintAccelerator
             });
         }
 
@@ -223,9 +309,8 @@ class BiliMusicPlayer {
             this.lyricsWindowWasVisible = false;
         }
 
-        // 可选：触发后最小化窗口
-        if (active && this.privacySettings.action === 'overlay_minimize' &&
-            this.mainWindow && !this.mainWindow.isDestroyed()) {
+        // 触发动作选择最小化
+        if (active && this.privacyMinimize && this.mainWindow && !this.mainWindow.isDestroyed()) {
             this.mainWindow.minimize();
         }
     }
@@ -959,33 +1044,29 @@ class BiliMusicPlayer {
 
         // 隐私模式（老板键）
         ipcMain.handle('privacy-toggle', async () => {
-            this.togglePrivacy();
+            // 标题栏按钮 / 应用内快捷键：使用可配置的默认动作
+            this.triggerPrivacy(this.privacySettings.toolbarAction || 'overlay');
             return { success: true, active: this.privacyActive };
         });
 
         ipcMain.handle('privacy-get-settings', async () => {
-            return { success: true, settings: { ...this.privacySettings } };
+            return { success: true, settings: JSON.parse(JSON.stringify(this.privacySettings)) };
         });
 
         ipcMain.handle('privacy-set-settings', async (event, settings) => {
             try {
-                if (!settings || typeof settings !== 'object') {
+                const normalized = this.normalizePrivacySettings(settings);
+                if (!normalized) {
                     return { success: false, error: '无效的设置' };
                 }
 
-                this.privacySettings = { ...this.privacySettings, ...settings };
-                await this.database.setSetting('privacy_settings', this.privacySettings);
+                this.privacySettings = normalized;
+                await this.database.setSetting('privacy_settings', normalized);
 
                 // 重新注册快捷键
-                const ok = this.applyPrivacyShortcut();
-                if (!ok) {
-                    return {
-                        success: false,
-                        error: `快捷键 ${this.privacySettings.accelerator} 注册失败（可能被其他程序占用），请换一个键位`
-                    };
-                }
+                this.applyPrivacyShortcuts();
 
-                return { success: true, settings: { ...this.privacySettings } };
+                return { success: true, settings: JSON.parse(JSON.stringify(normalized)) };
             } catch (error) {
                 console.error('保存隐私设置失败:', error);
                 return { success: false, error: error.message };

@@ -258,16 +258,30 @@ window.DialogsUI = {
             const volumeSyncEnabled = await electronAPI.database.getSetting('volume_sync_enabled', true);
             const volumeStats = await electronAPI.volume.getStats();
 
-            // 获取隐私设置
-            let privacySettings = { enabled: true, accelerator: 'F9', action: 'overlay' };
+            // 获取隐私设置（多键位格式）
+            let privacySettings = {
+                enabled: true,
+                keys: { overlay: 'F9', overlay_minimize: '', audio_only: '', quit: '' },
+                toolbarAction: 'overlay'
+            };
             try {
                 const privacyResult = await electronAPI.privacy.getSettings();
                 if (privacyResult && privacyResult.success && privacyResult.settings) {
                     privacySettings = { ...privacySettings, ...privacyResult.settings };
+                    if (!privacySettings.keys) {
+                        privacySettings.keys = { overlay: 'F9', overlay_minimize: '', audio_only: '', quit: '' };
+                    }
                 }
             } catch (error) {
                 console.error('获取隐私设置失败:', error);
             }
+
+            const actionNames = {
+                overlay: '暂停并全屏遮罩',
+                audio_only: '继续播放，只遮住屏幕',
+                overlay_minimize: '暂停、遮罩并最小化',
+                quit: '直接退出应用'
+            };
 
             // 获取网络设置（代理 / cookies）
             let networkSettings = { proxy: '', cookiesPath: '' };
@@ -371,27 +385,33 @@ window.DialogsUI = {
                                             </div>
 
                                             <div class="setting-item">
-                                                <label>老板键键位</label>
-                                                <div class="range-container">
-                                                    <span id="privacy-accelerator-display" style="min-width: 90px; font-family: Consolas, Monaco, monospace; padding: 4px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2);">${utils.escapeHtml(privacySettings.accelerator)}</span>
-                                                    <button class="btn btn-secondary" id="record-privacy-key-btn">录制新键位</button>
-                                                </div>
-                                                <small>点击"录制新键位"后按下想要的按键或组合键（如 F9、Ctrl+Shift+M），Esc 取消</small>
+                                                <label>动作与键位</label>
+                                                <small>每种动作可绑定独立快捷键（同一时间只响应一个键）。遮罩状态下再按任意老板键即恢复界面；"直接退出"不可恢复。</small>
                                             </div>
 
+                                            ${Object.entries(actionNames).map(([action, name]) => `
+                                            <div class="setting-item privacy-key-row" data-action="${action}">
+                                                <div class="range-container">
+                                                    <span style="min-width: 200px; font-size: 13px; color: var(--text);">${name}</span>
+                                                    <span class="key-display" data-role="key-display" style="min-width: 86px; text-align: center; font-family: Consolas, Monaco, monospace; font-size: 12.5px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: ${privacySettings.keys[action] ? 'var(--accent)' : 'var(--text-faint)'};">${utils.escapeHtml(privacySettings.keys[action] || '未绑定')}</span>
+                                                    <button class="btn btn-secondary privacy-record-btn" data-action="${action}" style="padding: 5px 12px; font-size: 12px;">录制</button>
+                                                    <button class="btn btn-secondary privacy-clear-btn" data-action="${action}" style="padding: 5px 12px; font-size: 12px;" ${privacySettings.keys[action] ? '' : 'disabled'}>清除</button>
+                                                </div>
+                                            </div>
+                                            `).join('')}
+
                                             <div class="setting-item">
-                                                <label>触发动作</label>
-                                                <select id="privacy-action" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); max-width: 260px;">
-                                                    <option value="overlay" ${privacySettings.action === 'overlay' ? 'selected' : ''}>暂停并全屏遮罩</option>
-                                                    <option value="audio_only" ${privacySettings.action === 'audio_only' ? 'selected' : ''}>继续播放，只遮住屏幕（戴耳机时用）</option>
-                                                    <option value="overlay_minimize" ${privacySettings.action === 'overlay_minimize' ? 'selected' : ''}>暂停、遮罩并最小化窗口</option>
-                                                    <option value="quit" ${privacySettings.action === 'quit' ? 'selected' : ''}>直接退出应用</option>
+                                                <label>标题栏隐私按钮的动作</label>
+                                                <select id="privacy-toolbar-action" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); max-width: 260px;">
+                                                    ${Object.entries(actionNames).map(([action, name]) =>
+                                                        `<option value="${action}" ${privacySettings.toolbarAction === action ? 'selected' : ''}>${name}</option>`
+                                                    ).join('')}
                                                 </select>
-                                                <small>触发后立即遮罩全部信息；若桌面歌词窗口是打开状态会一并隐藏，退出隐私模式后自动恢复显示（"直接退出"除外）</small>
+                                                <small>点击窗口右上角的隐私按钮（或按 Ctrl+Shift+H）时执行的动作；默认"暂停并全屏遮罩"（正在播放会立即暂停并隐藏整个界面）。触发后若桌面歌词窗口打开会一并隐藏，退出隐私模式后自动恢复（"直接退出"除外）。</small>
                                             </div>
 
                                             <div class="setting-actions">
-                                                <button class="btn btn-secondary" id="test-privacy-btn">立即体验</button>
+                                                <button class="btn btn-secondary" id="test-privacy-btn">立即体验（标题栏按钮动作）</button>
                                             </div>
 
                                             <div class="settings-save-section">
@@ -580,23 +600,34 @@ window.DialogsUI = {
                 });
             }
 
-            // ==================== 隐私与老板键事件绑定 ====================
-            let pendingAccelerator = privacySettings.accelerator;
-            const acceleratorDisplay = dialog.querySelector('#privacy-accelerator-display');
-            const recordKeyBtn = dialog.querySelector('#record-privacy-key-btn');
-            const testPrivacyBtn = dialog.querySelector('#test-privacy-btn');
-            const savePrivacyBtn = dialog.querySelector('#save-privacy-btn');
+            // ==================== 隐私与老板键事件绑定（多键位） ====================
+            const pendingKeys = { ...privacySettings.keys };
 
-            if (recordKeyBtn) {
-                recordKeyBtn.addEventListener('click', () => {
-                    recordKeyBtn.textContent = '请按下按键…（Esc 取消）';
+            const refreshKeyRow = (action) => {
+                const row = dialog.querySelector(`.privacy-key-row[data-action="${action}"]`);
+                if (!row) return;
+                const display = row.querySelector('[data-role="key-display"]');
+                const clearBtn = row.querySelector('.privacy-clear-btn');
+                if (display) {
+                    display.textContent = pendingKeys[action] || '未绑定';
+                    display.style.color = pendingKeys[action] ? 'var(--accent)' : 'var(--text-faint)';
+                }
+                if (clearBtn) clearBtn.disabled = !pendingKeys[action];
+            };
+
+            // 录制按钮（每行动作独立）
+            dialog.querySelectorAll('.privacy-record-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const action = btn.dataset.action;
+                    const original = btn.textContent;
+                    btn.textContent = '按键…';
 
                     const onKey = (e) => {
                         e.preventDefault();
                         e.stopPropagation();
 
                         if (e.key === 'Escape') {
-                            // 取消录制
+                            // 取消录制，保持原键位
                         } else if (!['Control', 'Alt', 'Shift', 'Meta'].includes(e.key)) {
                             const parts = [];
                             if (e.ctrlKey) parts.push('Ctrl');
@@ -608,21 +639,39 @@ window.DialogsUI = {
                             if (key.length === 1) key = key.toUpperCase();
                             parts.push(key);
 
-                            pendingAccelerator = parts.join('+');
-                            if (acceleratorDisplay) {
-                                acceleratorDisplay.textContent = pendingAccelerator;
+                            // 同一键不能绑两个动作：若已被其他动作占用则顶掉旧的
+                            const newAcc = parts.join('+');
+                            for (const other of Object.keys(pendingKeys)) {
+                                if (other !== action && pendingKeys[other] && pendingKeys[other].toLowerCase() === newAcc.toLowerCase()) {
+                                    pendingKeys[other] = '';
+                                    refreshKeyRow(other);
+                                }
                             }
+                            pendingKeys[action] = newAcc;
+                            refreshKeyRow(action);
                         } else {
                             return;
                         }
 
-                        recordKeyBtn.textContent = '录制新键位';
+                        btn.textContent = original;
                         document.removeEventListener('keydown', onKey, true);
                     };
 
                     document.addEventListener('keydown', onKey, true);
                 });
-            }
+            });
+
+            // 清除按钮
+            dialog.querySelectorAll('.privacy-clear-btn').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const action = btn.dataset.action;
+                    pendingKeys[action] = '';
+                    refreshKeyRow(action);
+                });
+            });
+
+            const testPrivacyBtn = dialog.querySelector('#test-privacy-btn');
+            const savePrivacyBtn = dialog.querySelector('#save-privacy-btn');
 
             if (testPrivacyBtn) {
                 testPrivacyBtn.addEventListener('click', () => {
@@ -636,8 +685,8 @@ window.DialogsUI = {
                     try {
                         const newSettings = {
                             enabled: dialog.querySelector('#privacy-enabled').checked,
-                            accelerator: pendingAccelerator || 'F9',
-                            action: dialog.querySelector('#privacy-action').value
+                            keys: { ...pendingKeys },
+                            toolbarAction: dialog.querySelector('#privacy-toolbar-action').value
                         };
 
                         const result = await electronAPI.privacy.setSettings(newSettings);
