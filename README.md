@@ -2,7 +2,7 @@
 
 > 听力 / 播客 / 音乐学习伴侣 —— 声织四季，瓣落成音
 
-![Version](https://img.shields.io/badge/version-2.0.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
 
@@ -69,8 +69,8 @@ Sakura Echo 不只是音乐播放器：它为**语言学习**和**播客收听**
 
 访问 [GitHub Releases](https://github.com/xuzhili835/MusicPlayer/releases) 下载最新版本
 
-- **Sakura Echo Setup 2.0.0.exe** - 安装版（推荐）
-- **Sakura Echo-2.0.0-win.zip** - 便携版
+- **Sakura Echo Setup 1.2.0.exe** - 安装版（推荐）
+- **Sakura Echo-1.2.0-win.zip** - 便携版
 
 ### 方式二：从源码运行
 
