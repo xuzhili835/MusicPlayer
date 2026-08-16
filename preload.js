@@ -166,7 +166,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // 工具诊断
     tools: {
         diagnose: (toolName) => ipcRenderer.invoke('tools-diagnose', toolName),
-        forceDownload: (toolName) => ipcRenderer.invoke('tools-force-download', toolName)
+        forceDownload: (toolName) => ipcRenderer.invoke('tools-force-download', toolName),
+        checkUpdate: () => ipcRenderer.invoke('tools-check-update'),
+        updateYtDlp: () => ipcRenderer.invoke('tools-update-ytdlp')
+    },
+
+    // 存储位置
+    storage: {
+        getInfo: () => ipcRenderer.invoke('storage-get-info'),
+        chooseDir: () => ipcRenderer.invoke('storage-choose-dir'),
+        migrate: (newDir) => ipcRenderer.invoke('storage-migrate', newDir),
+        onMigrateProgress: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('storage-migrate-progress', subscription);
+            return () => ipcRenderer.removeListener('storage-migrate-progress', subscription);
+        }
     },
 
     // 歌词功能

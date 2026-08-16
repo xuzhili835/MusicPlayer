@@ -144,12 +144,14 @@ window.LibraryUI = {
 
         // 封面（无缩略图时留空底）
         const coverSrc = song.thumbnail ? this.resolveMediaUrl(song.thumbnail) : null;
+        const plays = song.play_count || 0;
         item.innerHTML = `
             <div class="song-cover">${coverSrc ? `<img src="${utils.escapeHtml(coverSrc)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</div>
             <div class="song-info-cell">
                 <div class="song-title" title="${utils.escapeHtml(song.title)}">${utils.escapeHtml(song.title)}</div>
             </div>
             <div class="song-cell-artist">${utils.escapeHtml(song.artist || '未知艺术家')}</div>
+            <div class="song-plays${plays >= 10 ? ' hot' : ''}" title="播放 ${plays} 次">${plays}</div>
             <div class="song-duration">${utils.formatTime(song.duration)}</div>
         `;
 

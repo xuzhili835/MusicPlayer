@@ -77,8 +77,9 @@ class BiliMusicPlayer {
             // 禁用默认菜单栏
             Menu.setApplicationMenu(null);
             
-            await this.ensureDirectories();
+            // 数据库先于目录初始化：音乐目录可能配置在数据库设置里（自定义存储位置）
             await this.database.initialize();
+            await this.ensureDirectories();
             
             // 设置工具（检查并下载必要的工具）
             await this.setupTools();
@@ -485,15 +486,21 @@ class BiliMusicPlayer {
     // 确保目录存在
     async ensureDirectories() {
         try {
+            // 音乐目录支持用户自定义（存设置里），默认在用户数据目录
+            const customMusicDir = await this.database.getSetting('music_dir', '');
+            if (customMusicDir && typeof customMusicDir === 'string' && customMusicDir.trim()) {
+                this.musicDir = customMusicDir.trim();
+            }
+
             await fs.mkdir(this.musicDir, { recursive: true });
             await fs.mkdir(this.tempDir, { recursive: true });
             await fs.mkdir(this.thumbnailsDir, { recursive: true });
             await fs.mkdir(this.lyricsDir, { recursive: true });
-            
+
             // 迁移现有数据
             await this.migrateExistingData();
-            
-            console.log('目录初始化完成');
+
+            console.log('目录初始化完成，音乐目录:', this.musicDir);
         } catch (error) {
             console.error('目录初始化失败:', error);
         }
@@ -1149,6 +1156,178 @@ class BiliMusicPlayer {
             }
         });
 
+        // ==================== 存储位置（自定义音乐目录 + 迁移） ====================
+
+        // 存储信息：当前音乐目录、文件数、占用
+        ipcMain.handle('storage-get-info', async () => {
+            try {
+                let fileCount = 0;
+                let totalSize = 0;
+                try {
+                    const files = await fs.readdir(this.musicDir);
+                    for (const file of files) {
+                        const stats = await fs.stat(path.join(this.musicDir, file));
+                        if (stats.isFile()) {
+                            fileCount++;
+                            totalSize += stats.size;
+                        }
+                    }
+                } catch (e) { /* 目录为空或不存在 */ }
+
+                return {
+                    success: true,
+                    musicDir: this.musicDir,
+                    defaultDir: path.join(app.getPath('userData'), 'music'),
+                    isDefault: this.musicDir === path.join(app.getPath('userData'), 'music'),
+                    fileCount,
+                    totalSize
+                };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 选择新存储目录
+        ipcMain.handle('storage-choose-dir', async () => {
+            const result = await dialog.showOpenDialog(this.mainWindow, {
+                title: '选择音乐存储位置',
+                properties: ['openDirectory', 'createDirectory']
+            });
+            if (!result.canceled && result.filePaths.length > 0) {
+                return result.filePaths[0];
+            }
+            return null;
+        });
+
+        // 迁移音乐文件到新目录（复制 → 更新数据库路径 → 删除旧文件）
+        ipcMain.handle('storage-migrate', async (event, newDir) => {
+            try {
+                if (!newDir || typeof newDir !== 'string' || !newDir.trim()) {
+                    return { success: false, error: '无效的目录' };
+                }
+                newDir = newDir.trim();
+                if (path.resolve(newDir) === path.resolve(this.musicDir)) {
+                    return { success: false, error: '新旧目录相同' };
+                }
+
+                const sendProgress = (text) => {
+                    if (this.mainWindow) {
+                        this.mainWindow.webContents.send('storage-migrate-progress', { text });
+                    }
+                };
+
+                await fs.mkdir(newDir, { recursive: true });
+
+                // 1. 复制文件
+                sendProgress('正在复制文件...');
+                let copied = 0, skipped = 0;
+                const oldDir = this.musicDir;
+                let files = [];
+                try {
+                    files = await fs.readdir(oldDir);
+                } catch (e) { /* 旧目录为空 */ }
+
+                for (const file of files) {
+                    const srcFile = path.join(oldDir, file);
+                    const stats = await fs.stat(srcFile).catch(() => null);
+                    if (!stats || !stats.isFile()) continue;
+                    await fs.copyFile(srcFile, path.join(newDir, file));
+                    copied++;
+                    sendProgress(`正在复制文件... ${copied}`);
+                }
+
+                // 2. 更新数据库路径
+                sendProgress('正在更新数据库记录...');
+                const updatedRecords = await this.database.migrateSongsPath(oldDir, newDir);
+
+                // 3. 删除旧目录中的文件（已复制过去）
+                sendProgress('正在清理旧目录...');
+                for (const file of files) {
+                    await fs.unlink(path.join(oldDir, file)).catch(() => {});
+                }
+
+                // 4. 保存设置并切换
+                this.musicDir = newDir;
+                await this.database.setSetting('music_dir', newDir);
+
+                console.log(`存储迁移完成：${copied} 个文件，${updatedRecords} 条记录`);
+                return { success: true, copied, updatedRecords, musicDir: newDir };
+            } catch (error) {
+                console.error('存储迁移失败:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // ==================== 工具更新（yt-dlp） ====================
+
+        // 检查 yt-dlp 版本更新（本地 vs GitHub latest）
+        ipcMain.handle('tools-check-update', async () => {
+            try {
+                const localPath = await this.toolsManager.getExecutableCommand('yt-dlp');
+                if (!localPath) {
+                    return { success: false, error: 'yt-dlp 工具不可用' };
+                }
+
+                // 本地版本
+                const localVersion = await new Promise((resolve) => {
+                    const child = spawn(localPath, ['--version'], { windowsHide: true });
+                    let out = '';
+                    child.stdout.on('data', (d) => { out += d.toString(); });
+                    child.on('close', () => resolve(out.trim()));
+                    child.on('error', () => resolve(''));
+                });
+
+                // GitHub 最新版本号
+                const https = require('https');
+                const remote = await new Promise((resolve, reject) => {
+                    const req = https.get('https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest', {
+                        headers: { 'User-Agent': 'SakuraEcho-Updater', 'Accept': 'application/vnd.github+json' },
+                        timeout: 10000
+                    }, (res) => {
+                        if (res.statusCode !== 200) { res.resume(); reject(new Error('HTTP ' + res.statusCode)); return; }
+                        let body = '';
+                        res.on('data', (c) => { body += c; });
+                        res.on('end', () => {
+                            try { resolve(String(JSON.parse(body).tag_name || '')); } catch (e) { reject(e); }
+                        });
+                    });
+                    req.on('timeout', () => req.destroy(new Error('网络超时')));
+                    req.on('error', reject);
+                });
+
+                if (!localVersion || !remote) {
+                    return { success: false, error: '获取版本信息失败' };
+                }
+
+                return {
+                    success: true,
+                    local: localVersion,
+                    remote,
+                    hasUpdate: localVersion !== remote
+                };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 更新 yt-dlp（下载最新版到用户目录，用户目录优先级高于内置版本）
+        ipcMain.handle('tools-update-ytdlp', async () => {
+            try {
+                await this.toolsManager.downloadTool('yt-dlp', (progress, downloaded, total) => {
+                    if (this.mainWindow) {
+                        this.mainWindow.webContents.send('tool-download-progress', {
+                            tool: 'yt-dlp', progress, downloaded, total
+                        });
+                    }
+                });
+                const newPath = await this.toolsManager.getExecutableCommand('yt-dlp');
+                return { success: true, path: newPath };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+    
         // 检查更新（GitHub Releases；网络不通时静默失败）
         ipcMain.handle('app-check-update', async () => {
             return await this.checkForUpdates();

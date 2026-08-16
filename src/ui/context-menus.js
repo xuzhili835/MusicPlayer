@@ -54,7 +54,9 @@ window.ContextMenus = {
             <div class="menu-item" data-action="edit-info">修改信息</div>
             <div class="menu-separator"></div>
             <div class="menu-item" data-action="transcribe">AI 识别歌词（音频）</div>
-            <div class="menu-item" data-action="ocr-lyrics">从图片导入歌词（OCR）</div>
+            <div class="menu-item" data-action="ocr-lyrics">从图片识别歌词（OCR）</div>
+            <div class="menu-separator"></div>
+            <div class="menu-item" data-action="info">详细信息</div>
             <div class="menu-separator"></div>
             <div class="menu-item danger" data-action="delete">删除</div>
         `;

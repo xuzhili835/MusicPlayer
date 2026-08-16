@@ -1076,6 +1076,24 @@ class Database {
         }
     }
 
+    // 迁移歌曲路径前缀（存储目录变更时）：oldDir → newDir
+    async migrateSongsPath(oldDir, newDir) {
+        try {
+            const songs = await this.query('SELECT id, path FROM songs WHERE path LIKE ?', [oldDir + '%']);
+            let updated = 0;
+            for (const song of songs) {
+                const newPath = newDir + song.path.slice(oldDir.length);
+                await this.run('UPDATE songs SET path = ? WHERE id = ?', [newPath, song.id]);
+                updated++;
+            }
+            console.log(`路径迁移完成：${updated} 条记录 ${oldDir} → ${newDir}`);
+            return updated;
+        } catch (error) {
+            console.error('迁移歌曲路径失败:', error);
+            throw error;
+        }
+    }
+
     // 关闭数据库连接
     async close() {
         return new Promise((resolve, reject) => {

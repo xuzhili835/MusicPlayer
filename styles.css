@@ -647,7 +647,7 @@ html[data-theme="light"] .icon-moon { display: block; }
 
 .songs-header {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 170px 56px;
+    grid-template-columns: 44px minmax(0, 1fr) 170px 48px 56px;
     gap: 12px;
     padding: 6px 12px;
     font-size: 11px;
@@ -749,6 +749,18 @@ html[data-theme="light"] .icon-moon { display: block; }
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
     text-align: right;
+}
+
+.song-plays {
+    font-size: 12px;
+    color: var(--text-faint);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+}
+
+.song-plays.hot {
+    color: var(--accent);
+    font-weight: 600;
 }
 
 /* 标题跑马灯（超长时滚动） */
@@ -2052,7 +2064,7 @@ input[type="range"]:disabled {
     }
     .songs-header,
     .song-item {
-        grid-template-columns: 40px minmax(0, 1fr) 56px;
+        grid-template-columns: 40px minmax(0, 1fr) 48px 56px;
     }
     .song-col-artist, .song-cell-artist {
         display: none;

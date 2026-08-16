@@ -339,6 +339,7 @@ window.DialogsUI = {
                                 <div class="settings-nav-item active" data-panel="volume-sync">音量同步</div>
                                 <div class="settings-nav-item" data-panel="privacy">隐私与老板键</div>
                                 <div class="settings-nav-item" data-panel="network">网络与下载</div>
+                                <div class="settings-nav-item" data-panel="storage">存储位置</div>
                                 <div class="settings-nav-item" data-panel="ai">AI 歌词识别</div>
                                 <div class="settings-nav-item" data-panel="about">关于与更新</div>
                                 <div class="settings-nav-item" data-panel="console">检查控制台</div>
@@ -385,10 +386,7 @@ window.DialogsUI = {
                                                 </button>
                                                 <button class="btn btn-secondary" id="reset-volume-btn">重置为默认</button>
                                             </div>
-
-                                            <div class="settings-save-section">
-                                                <button class="btn btn-primary" id="save-settings-btn">保存并应用</button>
-                                            </div>
+                                            <small style="font-size: 11.5px; color: var(--text-faint);">开关与目标响度改动即时生效（调整目标响度会自动重算已分析内容的增益）。</small>
                                         </div>
                                     </div>
                                 </div>
@@ -433,10 +431,7 @@ window.DialogsUI = {
                                             <div class="setting-actions">
                                                 <button class="btn btn-secondary" id="test-privacy-btn">立即体验（标题栏按钮动作）</button>
                                             </div>
-
-                                            <div class="settings-save-section">
-                                                <button class="btn btn-primary" id="save-privacy-btn">保存并应用</button>
-                                            </div>
+                                            <small style="font-size: 11.5px; color: var(--text-faint);">所有改动即时生效并保存，无需手动保存。</small>
                                         </div>
                                     </div>
                                 </div>
@@ -461,9 +456,7 @@ window.DialogsUI = {
                                                 <small>使用浏览器导出的 cookies.txt 可下载需要登录的内容（如年龄限制视频）。</small>
                                             </div>
 
-                                            <div class="settings-save-section">
-                                                <button class="btn btn-primary" id="save-network-btn">保存并应用</button>
-                                            </div>
+                                            <small style="font-size: 11.5px; color: var(--text-faint); margin-top: 8px;">改动即时生效并保存。</small>
                                         </div>
                                     </div>
                                 </div>
@@ -481,6 +474,26 @@ window.DialogsUI = {
                                                 <button class="btn btn-secondary" id="batch-transcribe-btn">批量识别已有内容</button>
                                             </div>
                                             <small style="font-size: 11.5px; color: var(--text-faint);">「批量识别」对库里还没有歌词的内容逐个本地识别（无需重新下载），也可右键单个内容识别。</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 存储位置面板 -->
+                                <div class="settings-content-panel" id="panel-storage">
+                                    <div class="settings-section">
+                                        <div class="settings-group">
+                                            <div class="setting-item">
+                                                <label>音乐存储位置</label>
+                                                <small>默认在 C 盘用户数据目录（Windows 规范：安装目录无写入权限且卸载会丢数据）。音乐文件较大，可改存到其他盘，已有文件会自动迁移。</small>
+                                            </div>
+                                            <div class="setting-item">
+                                                <div id="storage-current-info" style="font-size: 12.5px; color: var(--text-muted); background: var(--surface-2); border-radius: 8px; padding: 10px 12px; line-height: 1.7; word-break: break-all;">加载中...</div>
+                                            </div>
+                                            <div class="setting-actions">
+                                                <button class="btn btn-primary" id="storage-change-btn">更改存储位置</button>
+                                                <button class="btn btn-secondary" id="storage-refresh-btn">刷新</button>
+                                            </div>
+                                            <small style="font-size: 11.5px; color: var(--text-faint);">更改时会复制全部音乐文件到新位置并更新数据库记录，完成后自动清理旧目录（歌词、缩略图等小文件仍在用户数据目录）。</small>
                                         </div>
                                     </div>
                                 </div>
@@ -519,6 +532,7 @@ window.DialogsUI = {
                                     </div>
                                     <div class="console-group-title">工具</div>
                                     <div class="console-actions">
+                                        <button id="ytdlp-update-btn" class="btn btn-success">检查 yt-dlp 更新</button>
                                         <button id="diagnose-tools-btn" class="btn btn-info">诊断工具状态</button>
                                         <button id="force-download-btn" class="btn btn-warning">强制重新下载工具</button>
                                         <button id="open-devtools-btn" class="btn btn-secondary">打开开发者工具</button>
@@ -561,7 +575,7 @@ window.DialogsUI = {
                 });
             });
 
-            // ==================== 音量同步事件绑定 ====================
+            // ==================== 音量同步事件绑定（即时生效） ====================
             const targetLufsInput = dialog.querySelector('#volume-target-lufs');
             const targetLufsValue = dialog.querySelector('#volume-target-value');
 
@@ -571,35 +585,35 @@ window.DialogsUI = {
                 });
             }
 
-            const saveBtn = dialog.querySelector('#save-settings-btn');
-            if (saveBtn) {
-                saveBtn.addEventListener('click', async () => {
+            // 开关即时生效
+            const volumeSyncToggle = dialog.querySelector('#volume-sync-enabled');
+            if (volumeSyncToggle) {
+                volumeSyncToggle.addEventListener('change', async () => {
                     try {
-                        const newTargetLufs = parseInt(targetLufsInput.value);
-                        const newVolumeSyncEnabled = dialog.querySelector('#volume-sync-enabled').checked;
+                        await electronAPI.database.setSetting('volume_sync_enabled', volumeSyncToggle.checked);
+                        this.showMessage(volumeSyncToggle.checked ? '音量自动平衡已启用' : '音量自动平衡已停用', 'info');
+                    } catch (error) {
+                        this.showMessage('保存失败: ' + error.message, 'error');
+                    }
+                });
+            }
 
+            // 目标响度：松手（change）时保存并重算增益
+            if (targetLufsInput) {
+                targetLufsInput.addEventListener('change', async () => {
+                    const newTargetLufs = parseInt(targetLufsInput.value);
+                    try {
                         await electronAPI.database.setSetting('volume_target_lufs', newTargetLufs);
-                        await electronAPI.database.setSetting('volume_sync_enabled', newVolumeSyncEnabled);
-
                         if (newTargetLufs !== targetLufs) {
                             this.showMessage('正在更新已分析内容的音量增益...', 'info');
-
                             const result = await electronAPI.volume.batchUpdateGains(newTargetLufs);
-
-                            if (result.updated > 0) {
-                                this.showMessage(`设置已保存，已更新 ${result.updated} 项的音量增益`, 'success');
-                                await this.refreshCurrentView();
-                            } else {
-                                this.showMessage('设置已保存', 'success');
-                            }
-                        } else {
-                            this.showMessage('设置已保存', 'success');
+                            this.showMessage(result.updated > 0
+                                ? `目标响度已设为 ${newTargetLufs} LUFS，已更新 ${result.updated} 项增益`
+                                : `目标响度已设为 ${newTargetLufs} LUFS`, 'success');
+                            await this.refreshCurrentView();
                         }
-
-                        dialog.remove();
                     } catch (error) {
-                        logger.error('保存设置失败:', error);
-                        this.showMessage('保存设置失败', 'error');
+                        this.showMessage('保存失败: ' + error.message, 'error');
                     }
                 });
             }
@@ -622,8 +636,32 @@ window.DialogsUI = {
                 });
             }
 
-            // ==================== 隐私与老板键事件绑定（多键位） ====================
+            // ==================== 隐私与老板键事件绑定（多键位，即时生效） ====================
             const pendingKeys = { ...privacySettings.keys };
+
+            // 即时保存（改动即生效，无需保存按钮）
+            const applyPrivacyNow = async () => {
+                try {
+                    const result = await electronAPI.privacy.setSettings({
+                        enabled: dialog.querySelector('#privacy-enabled').checked,
+                        keys: { ...pendingKeys },
+                        toolbarAction: dialog.querySelector('#privacy-toolbar-action').value
+                    });
+                    if (!result.success) {
+                        this.showMessage(result.error || '应用失败', 'error');
+                    }
+                } catch (error) {
+                    this.showMessage('应用失败: ' + error.message, 'error');
+                }
+            };
+
+            dialog.querySelector('#privacy-enabled').addEventListener('change', () => {
+                applyPrivacyNow().then(() => this.showMessage(privacySettings.enabled = dialog.querySelector('#privacy-enabled').checked ? '老板键已启用' : '老板键已停用', 'info'));
+            });
+
+            dialog.querySelector('#privacy-toolbar-action').addEventListener('change', () => {
+                applyPrivacyNow();
+            });
 
             // 保险：对话框以任何方式关闭时恢复全局快捷键（防录制中途关窗后老板键失效）
             const originalDialogRemove = dialog.remove.bind(dialog);
@@ -688,6 +726,7 @@ window.DialogsUI = {
                             }
                             pendingKeys[action] = newAcc;
                             refreshKeyRow(action);
+                            applyPrivacyNow();
                         } else {
                             return;
                         }
@@ -705,6 +744,7 @@ window.DialogsUI = {
                     const action = btn.dataset.action;
                     pendingKeys[action] = '';
                     refreshKeyRow(action);
+                    applyPrivacyNow();
                 });
             });
 
@@ -742,13 +782,31 @@ window.DialogsUI = {
                 });
             }
 
-            // ==================== 网络与下载事件绑定 ====================
+            // ==================== 网络与下载事件绑定（即时生效） ====================
             const proxyInput = dialog.querySelector('#download-proxy');
             const cookiesDisplay = dialog.querySelector('#cookies-path-display');
             const selectCookiesBtn = dialog.querySelector('#select-cookies-btn');
             const clearCookiesBtn = dialog.querySelector('#clear-cookies-btn');
-            const saveNetworkBtn = dialog.querySelector('#save-network-btn');
             let pendingCookiesPath = networkSettings.cookiesPath;
+
+            const saveNetworkNow = async (toastText) => {
+                try {
+                    const proxy = (proxyInput && proxyInput.value) ? proxyInput.value.trim() : '';
+                    await electronAPI.database.setSetting('download_proxy', proxy);
+                    await electronAPI.database.setSetting('cookies_path', pendingCookiesPath || '');
+                    if (toastText) this.showMessage(toastText, 'success');
+                } catch (error) {
+                    this.showMessage('保存失败: ' + error.message, 'error');
+                }
+            };
+
+            // 代理：失焦或回车时保存
+            if (proxyInput) {
+                proxyInput.addEventListener('change', () => saveNetworkNow('代理设置已保存'));
+                proxyInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') { e.preventDefault(); proxyInput.blur(); }
+                });
+            }
 
             if (selectCookiesBtn) {
                 selectCookiesBtn.addEventListener('click', async () => {
@@ -758,6 +816,7 @@ window.DialogsUI = {
                             pendingCookiesPath = filePath;
                             if (cookiesDisplay) cookiesDisplay.textContent = filePath;
                             if (clearCookiesBtn) clearCookiesBtn.style.display = '';
+                            saveNetworkNow('cookies 已设置');
                         }
                     } catch (error) {
                         logger.error('选择 cookies 文件失败:', error);
@@ -770,21 +829,7 @@ window.DialogsUI = {
                     pendingCookiesPath = '';
                     if (cookiesDisplay) cookiesDisplay.textContent = '未选择';
                     clearCookiesBtn.style.display = 'none';
-                });
-            }
-
-            if (saveNetworkBtn) {
-                saveNetworkBtn.addEventListener('click', async () => {
-                    try {
-                        const proxy = (proxyInput && proxyInput.value) ? proxyInput.value.trim() : '';
-                        await electronAPI.database.setSetting('download_proxy', proxy);
-                        await electronAPI.database.setSetting('cookies_path', pendingCookiesPath || '');
-                        this.showMessage('网络设置已保存', 'success');
-                        dialog.remove();
-                    } catch (error) {
-                        logger.error('保存网络设置失败:', error);
-                        this.showMessage('保存失败: ' + error.message, 'error');
-                    }
+                    saveNetworkNow('cookies 已清除');
                 });
             }
 
@@ -842,13 +887,117 @@ window.DialogsUI = {
                 });
             }
 
-            // ==================== 检查控制台事件绑定 ====================
-            // 输出带时间戳的分隔头，让多条结果可区分
+            // 输出带时间戳的分隔头（控制台各命令共用）
             const consoleHeader = (title) => {
                 const time = new Date().toLocaleTimeString();
                 return `<p style="color: var(--text-faint); margin:10px 0 4px; border-top:1px solid var(--border); padding-top:8px;">── ${time} · ${title} ──</p>`;
             };
 
+            // ==================== 存储位置事件绑定 ====================
+            const storageInfoEl = dialog.querySelector('#storage-current-info');
+            const storageChangeBtn = dialog.querySelector('#storage-change-btn');
+            const storageRefreshBtn = dialog.querySelector('#storage-refresh-btn');
+
+            const loadStorageInfo = async () => {
+                if (!storageInfoEl) return;
+                try {
+                    const info = await electronAPI.storage.getInfo();
+                    if (info.success) {
+                        storageInfoEl.innerHTML = `
+                            <strong style="color: var(--text);">当前目录：</strong>${utils.escapeHtml(info.musicDir)}${info.isDefault ? ' <span style="color: var(--text-faint);">（默认）</span>' : ''}<br>
+                            <strong style="color: var(--text);">文件：</strong>${info.fileCount} 个，共 ${utils.formatFileSize(info.totalSize)}`;
+                    } else {
+                        storageInfoEl.textContent = '读取失败：' + (info.error || '未知错误');
+                    }
+                } catch (error) {
+                    storageInfoEl.textContent = '读取失败：' + error.message;
+                }
+            };
+            loadStorageInfo();
+
+            if (storageRefreshBtn) {
+                storageRefreshBtn.addEventListener('click', loadStorageInfo);
+            }
+
+            if (storageChangeBtn) {
+                storageChangeBtn.addEventListener('click', async () => {
+                    try {
+                        const newDir = await electronAPI.storage.chooseDir();
+                        if (!newDir) return;
+
+                        const confirmed = await this.showConfirm({
+                            title: '迁移存储位置',
+                            message: `将把全部音乐文件迁移到：\n${newDir}\n\n过程会复制文件并更新数据库记录，期间请勿关闭应用。继续？`,
+                            confirmText: '开始迁移'
+                        });
+                        if (!confirmed) return;
+
+                        storageChangeBtn.disabled = true;
+                        storageInfoEl.textContent = '正在迁移...';
+
+                        const unsub = electronAPI.storage.onMigrateProgress((data) => {
+                            if (storageInfoEl && data && data.text) storageInfoEl.textContent = data.text;
+                        });
+
+                        try {
+                            const result = await electronAPI.storage.migrate(newDir);
+                            unsub();
+                            if (result.success) {
+                                this.showMessage(`迁移完成：${result.copied} 个文件`, 'success');
+                            } else {
+                                this.showMessage('迁移失败：' + (result.error || '未知错误'), 'error');
+                            }
+                        } finally {
+                            unsub();
+                            storageChangeBtn.disabled = false;
+                            loadStorageInfo();
+                        }
+                    } catch (error) {
+                        this.showMessage('迁移失败: ' + error.message, 'error');
+                        storageChangeBtn.disabled = false;
+                    }
+                });
+            }
+
+            // ==================== yt-dlp 检查更新 ====================
+            const ytdlpUpdateBtn = dialog.querySelector('#ytdlp-update-btn');
+            const ytdlpOutput = dialog.querySelector('#console-output');
+            if (ytdlpUpdateBtn) {
+                ytdlpUpdateBtn.addEventListener('click', async () => {
+                    ytdlpUpdateBtn.disabled = true;
+                    if (ytdlpOutput) ytdlpOutput.innerHTML = consoleHeader('检查 yt-dlp 更新') + '<p>正在查询本地与最新版本...</p>';
+                    try {
+                        const result = await electronAPI.tools.checkUpdate();
+                        if (!result.success) {
+                            if (ytdlpOutput) ytdlpOutput.innerHTML = consoleHeader('检查 yt-dlp 更新') + `<p style="color: var(--warning);">⚠ 检查失败：${utils.escapeHtml(result.error || '')}</p>`;
+                            return;
+                        }
+                        if (!result.hasUpdate) {
+                            if (ytdlpOutput) ytdlpOutput.innerHTML = consoleHeader('检查 yt-dlp 更新') + `<p style="color: var(--success);">✓ 已是最新版本 ${utils.escapeHtml(result.local)}</p>`;
+                            return;
+                        }
+                        // 有新版本：提示并直接更新
+                        if (ytdlpOutput) {
+                            ytdlpOutput.innerHTML = consoleHeader('检查 yt-dlp 更新') +
+                                `<p>本地版本：<strong>${utils.escapeHtml(result.local)}</strong> → 最新版本：<strong style="color: var(--accent);">${utils.escapeHtml(result.remote)}</strong></p>` +
+                                '<p>正在下载最新版（约 17MB，下载后自动生效）...</p>';
+                        }
+                        const updateResult = await electronAPI.tools.updateYtDlp();
+                        if (updateResult.success) {
+                            if (ytdlpOutput) ytdlpOutput.innerHTML += `<p style="color: var(--success);">✓ 更新完成，新版已生效</p>`;
+                            this.showMessage('yt-dlp 已更新到 ' + result.remote, 'success');
+                        } else {
+                            if (ytdlpOutput) ytdlpOutput.innerHTML += `<p style="color: var(--error);">❌ 下载失败：${utils.escapeHtml(updateResult.error || '')}</p>`;
+                        }
+                    } catch (error) {
+                        if (ytdlpOutput) ytdlpOutput.innerHTML += `<p style="color: var(--error);">❌ ${utils.escapeHtml(error.message)}</p>`;
+                    } finally {
+                        ytdlpUpdateBtn.disabled = false;
+                    }
+                });
+            }
+
+            // ==================== 检查控制台事件绑定 ====================
             const output = dialog.querySelector('#console-output');
             const refreshUIBtn = dialog.querySelector('#console-refresh-ui-btn');
             const checkSongsBtn = dialog.querySelector('#check-songs-btn');
