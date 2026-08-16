@@ -2,7 +2,7 @@
 
 > 听力 / 播客 / 音乐学习伴侣 —— 声织四季，瓣落成音
 
-![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)
+![Version](https://img.shields.io/badge/version-1.2.1-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
 ![Platform](https://img.shields.io/badge/platform-Windows-lightgrey.svg)
 
@@ -48,11 +48,10 @@ Sakura Echo 不只是音乐播放器：它为**语言学习**和**播客收听**
 - 下载选项：字幕/歌词开关、下载后自动 AI 转写；**后台下载**（标题栏徽标显示进度，可取消）
 - **网络设置**：代理地址（下载 YouTube 必需）、cookies.txt（年龄限制内容）
 
-### 🖊️ 歌词：下载 / AI 转写 / 图片 OCR
+### 🖊️ 歌词：字幕下载 / AI 转写
 - **AI 识别歌词（音频转文字）**：本地 whisper 模型，中/英/日/俄/法/德等 99 种语言自动检测，输出带时间轴 LRC
   - 模型四档规格（75MB ~ 1.5GB，推荐 Base），**由你选择下载**，随时删除释放空间
   - 支持右键单首识别，也支持**批量识别**库里所有无歌词内容（无需重新下载）
-- **图片 OCR 导入**：歌词图/课文图拍照导入，调用 Windows 内置 OCR，**零下载零体积**
 - 字幕自动下载（B站/YouTube），支持手动编辑保存
 
 ### 🎚️ 音量同步
@@ -82,8 +81,8 @@ Sakura Echo 不只是音乐播放器：它为**语言学习**和**播客收听**
 
 访问 [GitHub Releases](https://github.com/xuzhili835/MusicPlayer/releases) 下载最新版本
 
-- **Sakura Echo Setup 1.2.0.exe** - 安装版（推荐）
-- **Sakura Echo-1.2.0-win.zip** - 便携版
+- **Sakura Echo Setup 1.2.1.exe** - 安装版（推荐）
+- **Sakura Echo-1.2.1-win.zip** - 便携版
 
 ### 方式二：从源码运行
 
@@ -103,8 +102,7 @@ npm run build      # 打包
 2. **下载音源**：侧边栏「下载音源」→ 粘贴 B站/YouTube 链接 → 自动识别下载（后台进行，标题栏徽标显示进度）
 3. **设置老板键**：设置 → 隐私与老板键 → 给想要的动作逐个「录制」键位 → 「立即体验」试试
 4. **AI 歌词**：右键任意条目 → 「AI 识别歌词」→ 首次会引导选择模型规格（推荐 Base）；也可设置 → AI 歌词识别 → 批量识别全部无歌词内容
-5. **图片识别歌词（OCR）**：把歌词图/课文图保存为图片 → 右键条目 → 「从图片识别歌词（OCR）」→ 选图 → 识别结果可编辑 → 保存。适合听力材料没有字幕、只有图片原文的场景
-6. **听力练习**：播放后用倍速 + A-B 复读精听（`[` `]` 设区间、方向键快进退）
+5. **听力练习**：播放后用倍速 + A-B 复读精听（`[` `]` 设区间、方向键快进退）
 7. **存储位置**：默认在 C 盘用户数据目录，设置 → 存储位置 可改到其他盘（自动迁移）
 
 ### 下载 YouTube 需要代理？
@@ -121,7 +119,6 @@ npm run build      # 打包
 - **SQLite**（sqlite3）本地数据库
 - **yt-dlp / ffmpeg**：下载、转码、响度分析、语音识别预处理
 - **whisper.cpp**：本地语音识别（可选下载）
-- **Windows OCR**（WinRT）：图片文字识别
 
 ## 📁 项目结构
 
@@ -130,7 +127,6 @@ npm run build      # 打包
 ├── preload.js           # 上下文桥（安全暴露 API）
 ├── renderer.js          # 渲染进程核心（装配 mixin）
 ├── privacy.js           # 隐私模式（渲染端）
-├── ocr.js               # 图片 OCR（Windows 内置引擎）
 ├── lyrics.js            # 歌词：字幕下载/LRC 解析转换
 ├── database.js          # SQLite 数据层
 ├── tools-manager.js     # yt-dlp/ffmpeg/whisper 工具与模型管理
@@ -139,7 +135,7 @@ npm run build      # 打包
 │   ├── library-ui.js    #   库/视图/搜索/分类
 │   ├── playlists-ui.js  #   歌单管理
 │   ├── download-ui.js   #   下载界面
-│   ├── lyrics-ui.js     #   歌词/AI转写/OCR 流程
+│   ├── lyrics-ui.js     #   歌词/AI转写流程
 │   ├── listening-ui.js  #   倍速/A-B/睡眠/随机队列
 │   ├── context-menus.js #   右键菜单
 │   └── dialogs-ui.js    #   设置等对话框

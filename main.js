@@ -7,7 +7,6 @@ const { parseFile } = require('music-metadata');
 const Database = require('./database.js');
 const LyricsManager = require('./lyrics.js');
 const ToolsManager = require('./tools-manager.js');
-const OcrManager = require('./ocr.js');
 
 // 统一的浏览器 UA（站点风控需要）
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
@@ -30,8 +29,6 @@ class BiliMusicPlayer {
         this.toolsManager = new ToolsManager();
         this.lyricsManager = new LyricsManager(this.lyricsDir, this.tempDir, this.toolsManager);
 
-        // 初始化 OCR 管理器（Windows 内置 OCR，零依赖）
-        this.ocrManager = new OcrManager(userDataPath);
 
         // 下载进程追踪（用于取消下载）
         this.downloadProcesses = new Set();
@@ -1463,33 +1460,7 @@ class BiliMusicPlayer {
             return await this.getVideoInfo(url);
         });
 
-        // ==================== OCR / 语音识别（音频转歌词） ====================
-
-        // 选择图片（OCR 用）
-        ipcMain.handle('ocr-select-image', async () => {
-            const result = await dialog.showOpenDialog(this.mainWindow, {
-                title: '选择歌词/课文图片',
-                properties: ['openFile'],
-                filters: [
-                    { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'bmp', 'webp'] },
-                    { name: '所有文件', extensions: ['*'] }
-                ]
-            });
-            if (!result.canceled && result.filePaths.length > 0) {
-                return result.filePaths[0];
-            }
-            return null;
-        });
-
-        // 图片 OCR（Windows 内置引擎，零下载）
-        ipcMain.handle('ocr-image', async (event, imagePath) => {
-            try {
-                return await this.ocrManager.recognizeImage(imagePath);
-            } catch (error) {
-                console.error('OCR 失败:', error);
-                return { success: false, error: error.message };
-            }
-        });
+        // ==================== 语音识别（音频转歌词） ====================
 
         // whisper 状态（工具 + 模型列表 + 当前选择）
         ipcMain.handle('whisper-get-status', async () => {

@@ -134,11 +134,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
         }
     },
 
-    // OCR（图片转文字，Windows 内置引擎，零下载）
-    ocr: {
-        selectImage: () => ipcRenderer.invoke('ocr-select-image'),
-        recognizeImage: (imagePath) => ipcRenderer.invoke('ocr-image', imagePath)
-    },
 
     // 语音识别（音频转歌词，whisper，模型由用户选择下载）
     whisper: {
