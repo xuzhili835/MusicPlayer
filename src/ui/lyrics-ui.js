@@ -178,6 +178,122 @@ window.LyricsUI = {
         }
     },
 
+    // ==================== 批量 AI 转写（已有内容，无需重新下载） ====================
+
+    // 对所有没有歌词的已有内容批量转写
+    async batchTranscribe() {
+        // 模型检查
+        let status;
+        try {
+            status = await electronAPI.whisper.getStatus();
+        } catch (error) {
+            this.showMessage('语音识别服务不可用', 'error');
+            return;
+        }
+        if (!status.success) {
+            this.showMessage(status.error || '语音识别服务不可用', 'error');
+            return;
+        }
+
+        const current = status.currentModel || 'base';
+        if (!status.models || !status.models[current] || !status.models[current].downloaded) {
+            const ready = await this.showWhisperModelManager(true);
+            if (!ready) {
+                this.showMessage('需要先下载语音识别模型', 'info');
+                return;
+            }
+        }
+
+        // 获取缺歌词清单
+        let missing;
+        try {
+            missing = await electronAPI.lyrics.getMissing();
+        } catch (error) {
+            this.showMessage('查询失败: ' + error.message, 'error');
+            return;
+        }
+        if (!missing.success) {
+            this.showMessage(missing.error || '查询失败', 'error');
+            return;
+        }
+        if (!missing.songs || missing.songs.length === 0) {
+            this.showMessage('所有内容都已有歌词，无需识别', 'info');
+            return;
+        }
+
+        const total = missing.songs.length;
+        let done = 0, successCount = 0, failCount = 0, cancelled = false;
+
+        // 进度对话框
+        const dialog = document.createElement('div');
+        dialog.className = 'modal-overlay';
+        dialog.innerHTML = `
+            <div class="modal-content" style="width: 460px;">
+                <div class="modal-header">
+                    <h3>批量 AI 识别歌词</h3>
+                </div>
+                <div class="modal-body">
+                    <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 6px;" id="batch-transcribe-count"></p>
+                    <p style="font-size: 12.5px; color: var(--text); margin-bottom: 12px;" id="batch-transcribe-name">准备中...</p>
+                    <div class="progress-bar-container" style="height: 8px;">
+                        <div class="progress-bar">
+                            <div class="progress-filled" id="batch-transcribe-bar" style="width: 0%"></div>
+                        </div>
+                    </div>
+                    <p style="font-size: 11.5px; color: var(--text-faint); margin-top: 10px;">对已有音频本地识别（不用重新下载），耗时取决于数量与模型规格。识别结果自动保存为歌词。</p>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" id="batch-transcribe-cancel">停止</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(dialog);
+
+        const countEl = dialog.querySelector('#batch-transcribe-count');
+        const nameEl = dialog.querySelector('#batch-transcribe-name');
+        const barEl = dialog.querySelector('#batch-transcribe-bar');
+
+        const updateProgress = () => {
+            if (countEl) countEl.textContent = `进度：${done} / ${total}（成功 ${successCount}，失败 ${failCount}）`;
+            if (barEl) barEl.style.width = (total ? (done / total) * 100 : 100).toFixed(1) + '%';
+        };
+        updateProgress();
+
+        dialog.querySelector('#batch-transcribe-cancel').addEventListener('click', async () => {
+            cancelled = true;
+            try { await electronAPI.download.cancel(); } catch (e) { /* 忽略 */ }
+        });
+
+        for (const song of missing.songs) {
+            if (cancelled) break;
+            if (nameEl) nameEl.textContent = song.title;
+
+            try {
+                const result = await electronAPI.whisper.transcribeSong(song.id);
+                if (result && result.success && result.lrc) {
+                    await electronAPI.lyrics.save(song.title, result.lrc);
+                    successCount++;
+                } else if (result && result.cancelled) {
+                    cancelled = true;
+                    break;
+                } else {
+                    failCount++;
+                }
+            } catch (error) {
+                failCount++;
+            }
+
+            done++;
+            updateProgress();
+        }
+
+        dialog.remove();
+        this.showMessage(cancelled
+            ? `已停止：完成 ${successCount} 首，失败 ${failCount} 首`
+            : `批量识别完成：成功 ${successCount} 首${failCount ? `，失败 ${failCount} 首` : ''}`,
+            cancelled ? 'info' : 'success');
+    },
+
     // ==================== whisper 模型管理（用户选择规格下载） ====================
 
     // autoCloseOnReady: 下载完成并设为当前模型后自动关闭（从转写流程进入时用）

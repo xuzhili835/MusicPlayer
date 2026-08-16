@@ -116,6 +116,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
         toggle: () => ipcRenderer.invoke('privacy-toggle'),
         getSettings: () => ipcRenderer.invoke('privacy-get-settings'),
         setSettings: (settings) => ipcRenderer.invoke('privacy-set-settings', settings),
+        suspendShortcuts: () => ipcRenderer.invoke('privacy-suspend-shortcuts'),
+        resumeShortcuts: () => ipcRenderer.invoke('privacy-resume-shortcuts'),
 
         // 主进程推送的隐私状态变化
         onStateChanged: (callback) => {
@@ -172,6 +174,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
         get: (songTitle) => ipcRenderer.invoke('lyrics-get', songTitle),
         download: (videoUrl, songTitle) => ipcRenderer.invoke('lyrics-download', videoUrl, songTitle),
         save: (songTitle, lrcContent) => ipcRenderer.invoke('lyrics-save', songTitle, lrcContent),
+        getMissing: () => ipcRenderer.invoke('lyrics-get-missing'),
 
         // 桌面歌词窗口
         toggleWindow: () => ipcRenderer.invoke('lyrics-window-toggle'),

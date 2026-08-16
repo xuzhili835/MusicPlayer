@@ -467,6 +467,16 @@ class LyricsManager {
         }
     }
 
+    // 列出已有歌词的文件名主干（cleanFileName 后的标题，用于判断哪些歌曲缺歌词）
+    async listLyricsStems() {
+        try {
+            const files = await fs.readdir(this.lyricsDir);
+            return new Set(files.filter(f => f.toLowerCase().endsWith('.lrc')).map(f => f.replace(/\.lrc$/i, '')));
+        } catch (error) {
+            return new Set();
+        }
+    }
+
     // 获取歌词内容
     async getLyrics(songTitle) {
         try {

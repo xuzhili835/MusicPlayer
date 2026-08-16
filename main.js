@@ -1054,6 +1054,28 @@ class BiliMusicPlayer {
             return { success: true, settings: JSON.parse(JSON.stringify(this.privacySettings)) };
         });
 
+        // 录制键位期间临时注销全局快捷键
+        // （否则按下已注册的老板键会在系统层被拦截直接触发遮罩，录制事件根本到不了渲染进程）
+        ipcMain.handle('privacy-suspend-shortcuts', async () => {
+            try {
+                globalShortcut.unregisterAll();
+                this._shortcutsSuspended = true;
+                return { success: true };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+        ipcMain.handle('privacy-resume-shortcuts', async () => {
+            try {
+                this._shortcutsSuspended = false;
+                this.applyPrivacyShortcuts();
+                return { success: true };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
         ipcMain.handle('privacy-set-settings', async (event, settings) => {
             try {
                 const normalized = this.normalizePrivacySettings(settings);
@@ -1333,6 +1355,21 @@ class BiliMusicPlayer {
         // 删除模型（释放磁盘空间）
         ipcMain.handle('whisper-delete-model', async (event, modelKey) => {
             return { success: await this.toolsManager.deleteWhisperModel(modelKey) };
+        });
+
+        // 查询没有歌词的内容（批量 AI 转写用）
+        ipcMain.handle('lyrics-get-missing', async () => {
+            try {
+                const songs = await this.database.getAllSongs();
+                const stems = await this.lyricsManager.listLyricsStems();
+                const missing = songs
+                    .filter(s => !stems.has(this.lyricsManager.cleanFileName(s.title)))
+                    .map(s => ({ id: s.id, title: s.title }));
+                return { success: true, songs: missing };
+            } catch (error) {
+                console.error('查询缺歌词内容失败:', error);
+                return { success: false, error: error.message };
+            }
         });
 
         // 音频转歌词（whisper 多语言自动检测 → LRC）

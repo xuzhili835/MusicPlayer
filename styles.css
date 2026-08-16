@@ -1532,8 +1532,10 @@ input[type="range"]:disabled {
 
 .status-success { background: var(--success); }
 .status-warning { background: var(--warning); }
-.status-text.status-success { color: var(--success); font-size: 12px; }
-.status-text.status-warning { color: var(--warning); font-size: 12px; }
+.status-text {
+    font-size: 12px;
+    color: var(--text-muted); /* 文字保持常规色，状态只用色点指示，避免整行被绿色吞掉 */
+}
 
 .volume-details {
     background: var(--surface-2);
@@ -1811,6 +1813,46 @@ input[type="range"]:disabled {
     justify-content: flex-end;
     padding-top: 4px;
     border-top: 1px solid var(--border);
+}
+
+/* ---------- 隐私键位行（动作名/键位/按钮 三段对齐） ---------- */
+.privacy-key-row-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 100px 64px 64px;
+    align-items: center;
+    gap: 10px;
+}
+
+.privacy-key-name {
+    font-size: 13px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.privacy-key-row-inner .key-display {
+    text-align: center;
+    font-family: Consolas, Monaco, monospace;
+    font-size: 12.5px;
+    padding: 5px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--surface-2);
+    color: var(--text-faint);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.privacy-key-row-inner .key-display.bound {
+    color: var(--accent);
+}
+
+.privacy-key-row-inner .btn {
+    padding: 5px 0;
+    font-size: 12px;
+    justify-self: stretch;
 }
 
 /* ---------- 检查控制台 ---------- */

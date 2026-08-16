@@ -26,6 +26,10 @@ window.DialogsUI = {
                             <p><strong>文件路径:</strong> ${utils.escapeHtml(song.path)}</p>
                             <p><strong>时长:</strong> ${utils.formatTime(song.duration || 0)}</p>
                         </div>
+                        <div style="display:flex; gap:8px; margin-top:10px;">
+                            <button class="btn btn-secondary" id="edit-show-in-explorer-btn" style="padding:5px 12px; font-size:12px;">在文件夹中显示</button>
+                            <button class="btn btn-secondary" id="edit-analyze-volume-btn" style="padding:5px 12px; font-size:12px;">同步音量</button>
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -45,6 +49,21 @@ window.DialogsUI = {
         if (titleInput) {
             titleInput.focus();
             titleInput.select();
+        }
+
+        // 低频操作入口（从右键菜单精简挪入）
+        const showInExplorerBtn = dialog.querySelector('#edit-show-in-explorer-btn');
+        if (showInExplorerBtn) {
+            showInExplorerBtn.addEventListener('click', async () => {
+                try { await electronAPI.file.showInExplorer(song.path); } catch (e) { logger.error('打开文件夹失败:', e); }
+            });
+        }
+        const analyzeVolumeBtn = dialog.querySelector('#edit-analyze-volume-btn');
+        if (analyzeVolumeBtn) {
+            analyzeVolumeBtn.addEventListener('click', async () => {
+                analyzeVolumeBtn.disabled = true;
+                try { await this.analyzeSongVolume(song.id); } finally { analyzeVolumeBtn.disabled = false; }
+            });
         }
 
         const saveBtn = dialog.querySelector('#save-song-info-btn');
@@ -309,7 +328,7 @@ window.DialogsUI = {
             const dialog = document.createElement('div');
             dialog.className = 'modal-overlay';
             dialog.innerHTML = `
-                <div class="modal-content" style="width: 720px; max-width: calc(100vw - 48px);">
+                <div class="modal-content" style="width: 720px; max-width: calc(100vw - 48px); height: 620px; max-height: calc(100vh - 60px);">
                     <div class="modal-header">
                         <h3>设置</h3>
                         <button class="close-btn" aria-label="关闭">×</button>
@@ -392,11 +411,11 @@ window.DialogsUI = {
 
                                             ${Object.entries(actionNames).map(([action, name]) => `
                                             <div class="setting-item privacy-key-row" data-action="${action}">
-                                                <div class="range-container">
-                                                    <span style="min-width: 200px; font-size: 13px; color: var(--text);">${name}</span>
-                                                    <span class="key-display" data-role="key-display" style="min-width: 86px; text-align: center; font-family: Consolas, Monaco, monospace; font-size: 12.5px; padding: 5px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: ${privacySettings.keys[action] ? 'var(--accent)' : 'var(--text-faint)'};">${utils.escapeHtml(privacySettings.keys[action] || '未绑定')}</span>
-                                                    <button class="btn btn-secondary privacy-record-btn" data-action="${action}" style="padding: 5px 12px; font-size: 12px;">录制</button>
-                                                    <button class="btn btn-secondary privacy-clear-btn" data-action="${action}" style="padding: 5px 12px; font-size: 12px;" ${privacySettings.keys[action] ? '' : 'disabled'}>清除</button>
+                                                <div class="privacy-key-row-inner">
+                                                    <span class="privacy-key-name">${name}</span>
+                                                    <span class="key-display" data-role="key-display">${utils.escapeHtml(privacySettings.keys[action] || '未绑定')}</span>
+                                                    <button class="btn btn-secondary privacy-record-btn" data-action="${action}">录制</button>
+                                                    <button class="btn btn-secondary privacy-clear-btn" data-action="${action}" ${privacySettings.keys[action] ? '' : 'disabled'}>清除</button>
                                                 </div>
                                             </div>
                                             `).join('')}
@@ -455,11 +474,13 @@ window.DialogsUI = {
                                         <div class="settings-group">
                                             <div class="setting-item">
                                                 <label>语音识别模型</label>
-                                                <small>音频转歌词使用本地 AI 模型（whisper，中/英/日等多语言自动检测）。模型体积较大，按需选择下载，随时可删除释放空间。图片 OCR 使用 Windows 内置引擎，无需下载。</small>
+                                                <small>音频转歌词使用本地 AI 模型（whisper，中/英/日/俄/法/德等多语言自动检测）。模型体积较大，按需选择下载，随时可删除释放空间。图片 OCR 使用 Windows 内置引擎，无需下载。</small>
                                             </div>
                                             <div class="setting-actions">
                                                 <button class="btn btn-primary" id="manage-whisper-models-btn">管理模型</button>
+                                                <button class="btn btn-secondary" id="batch-transcribe-btn">批量识别已有内容</button>
                                             </div>
+                                            <small style="font-size: 11.5px; color: var(--text-faint);">「批量识别」对库里还没有歌词的内容逐个本地识别（无需重新下载），也可右键单个内容识别。</small>
                                         </div>
                                     </div>
                                 </div>
@@ -604,6 +625,13 @@ window.DialogsUI = {
             // ==================== 隐私与老板键事件绑定（多键位） ====================
             const pendingKeys = { ...privacySettings.keys };
 
+            // 保险：对话框以任何方式关闭时恢复全局快捷键（防录制中途关窗后老板键失效）
+            const originalDialogRemove = dialog.remove.bind(dialog);
+            dialog.remove = () => {
+                electronAPI.privacy.resumeShortcuts().catch(() => {});
+                originalDialogRemove();
+            };
+
             const refreshKeyRow = (action) => {
                 const row = dialog.querySelector(`.privacy-key-row[data-action="${action}"]`);
                 if (!row) return;
@@ -611,17 +639,27 @@ window.DialogsUI = {
                 const clearBtn = row.querySelector('.privacy-clear-btn');
                 if (display) {
                     display.textContent = pendingKeys[action] || '未绑定';
-                    display.style.color = pendingKeys[action] ? 'var(--accent)' : 'var(--text-faint)';
+                    display.classList.toggle('bound', !!pendingKeys[action]);
                 }
                 if (clearBtn) clearBtn.disabled = !pendingKeys[action];
             };
 
             // 录制按钮（每行动作独立）
+            // 注意：录制期间必须暂停全局快捷键，否则按已注册的老板键会在系统层被拦截
+            // 直接触发遮罩动作，录制事件到不了这里——那就是"覆盖录不上"的原因
             dialog.querySelectorAll('.privacy-record-btn').forEach(btn => {
-                btn.addEventListener('click', () => {
+                btn.addEventListener('click', async () => {
                     const action = btn.dataset.action;
                     const original = btn.textContent;
                     btn.textContent = '按键…';
+
+                    try { await electronAPI.privacy.suspendShortcuts(); } catch (e) { /* 忽略 */ }
+
+                    const finishRecording = () => {
+                        btn.textContent = original;
+                        document.removeEventListener('keydown', onKey, true);
+                        electronAPI.privacy.resumeShortcuts().catch(() => {});
+                    };
 
                     const onKey = (e) => {
                         e.preventDefault();
@@ -654,8 +692,7 @@ window.DialogsUI = {
                             return;
                         }
 
-                        btn.textContent = original;
-                        document.removeEventListener('keydown', onKey, true);
+                        finishRecording();
                     };
 
                     document.addEventListener('keydown', onKey, true);
@@ -757,6 +794,14 @@ window.DialogsUI = {
                 manageModelsBtn.addEventListener('click', async () => {
                     dialog.remove();
                     await this.showWhisperModelManager(false);
+                });
+            }
+
+            const batchTranscribeBtn = dialog.querySelector('#batch-transcribe-btn');
+            if (batchTranscribeBtn) {
+                batchTranscribeBtn.addEventListener('click', async () => {
+                    dialog.remove();
+                    await this.batchTranscribe();
                 });
             }
 
