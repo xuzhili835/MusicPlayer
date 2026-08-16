@@ -553,10 +553,28 @@ class ToolsManager {
     }
 
     // 获取执行命令（优先使用应用bin目录工具，然后使用用户bin目录工具，最后使用系统工具）
+    // 例外：yt-dlp 优先用户bin目录 —— 站点风控演进快，用户通过"强制重新下载工具"
+    // 拿到的最新版应当覆盖打包时内置的旧版
     async getExecutableCommand(toolName) {
         try {
             console.log(`正在获取 ${toolName} 的可执行命令...`);
-            
+
+            // 0. yt-dlp：用户bin目录优先（更新更快）
+            if (toolName === 'yt-dlp') {
+                const paths = this.getToolPath(toolName);
+                if (paths) {
+                    try {
+                        await fs.access(paths.user);
+                        if (await this.checkFilePermissions(paths.user)) {
+                            console.log(`使用用户bin目录工具(最新): ${paths.user}`);
+                            return paths.user;
+                        }
+                    } catch (error) {
+                        // 用户目录没有，继续常规顺序
+                    }
+                }
+            }
+
             // 1. 优先检查应用bin目录
             const paths = this.getToolPath(toolName);
             if (paths) {

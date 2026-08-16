@@ -127,10 +127,6 @@ window.DialogsUI = {
                             <span>${utils.escapeHtml(song.artist || '未知')}</span>
                         </div>
                         <div class="info-item">
-                            <label>分类</label>
-                            <span>${({ music: '音乐', podcast: '播客', listening: '听力' })[song.content_type || 'music']}</span>
-                        </div>
-                        <div class="info-item">
                             <label>时长</label>
                             <span>${utils.formatTime(song.duration || 0)}</span>
                         </div>
@@ -387,9 +383,11 @@ window.DialogsUI = {
                                                 <label>触发动作</label>
                                                 <select id="privacy-action" style="padding: 6px 10px; border: 1px solid var(--border); border-radius: 4px; background: var(--surface-2); color: var(--text); max-width: 260px;">
                                                     <option value="overlay" ${privacySettings.action === 'overlay' ? 'selected' : ''}>暂停并全屏遮罩</option>
+                                                    <option value="audio_only" ${privacySettings.action === 'audio_only' ? 'selected' : ''}>继续播放，只遮住屏幕（戴耳机时用）</option>
                                                     <option value="overlay_minimize" ${privacySettings.action === 'overlay_minimize' ? 'selected' : ''}>暂停、遮罩并最小化窗口</option>
+                                                    <option value="quit" ${privacySettings.action === 'quit' ? 'selected' : ''}>直接退出应用</option>
                                                 </select>
-                                                <small>触发后立即暂停播放并遮罩全部信息；若桌面歌词窗口是打开状态会一并隐藏，退出隐私模式后自动恢复显示</small>
+                                                <small>触发后立即遮罩全部信息；若桌面歌词窗口是打开状态会一并隐藏，退出隐私模式后自动恢复显示（"直接退出"除外）</small>
                                             </div>
 
                                             <div class="setting-actions">

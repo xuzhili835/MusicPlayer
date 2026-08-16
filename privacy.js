@@ -17,7 +17,7 @@ const PrivacyMode = {
                 if (data && typeof data.accelerator !== 'undefined') {
                     this.accelerator = data.accelerator || null;
                 }
-                this.setState(!!(data && data.active));
+                this.setState(!!(data && data.active), !!(data && data.keepAudio));
             });
 
             // 快捷键注册失败提示
@@ -40,20 +40,21 @@ const PrivacyMode = {
         }
     },
 
-    setState(active) {
+    setState(active, keepAudio = false) {
         if (active === this.active) return;
         this.active = active;
 
         if (active) {
-            this.enter();
+            this.enter(keepAudio);
         } else {
             this.exit();
         }
     },
 
-    enter() {
-        // 立即暂停播放（保持播放位置，恢复后手动续播）
-        if (this.player && this.player.audio) {
+    enter(keepAudio = false) {
+        // 立即暂停播放（保持播放位置，恢复后手动续播）；
+        // keepAudio 模式（继续播放、只遮屏）不暂停，音频继续、界面隐藏
+        if (!keepAudio && this.player && this.player.audio) {
             try { this.player.audio.pause(); } catch (e) { /* 忽略 */ }
         }
 

@@ -45,9 +45,6 @@ window.ContextMenus = {
             existingMenu.remove();
         }
 
-        const contentTypeNames = { music: '音乐', podcast: '播客', listening: '听力' };
-        const currentType = song.content_type || 'music';
-
         const menu = document.createElement('div');
         menu.className = 'context-menu';
         menu.innerHTML = `
@@ -62,8 +59,6 @@ window.ContextMenus = {
             <div class="menu-item" data-action="show-in-explorer">在文件夹中显示</div>
             <div class="menu-item" data-action="info">详细信息</div>
             <div class="menu-item" data-action="analyze-volume">同步音量</div>
-            <div class="menu-separator"></div>
-            <div class="menu-item" data-action="classify">分类（当前：${contentTypeNames[currentType] || '音乐'}）</div>
             <div class="menu-separator"></div>
             <div class="menu-item danger" data-action="delete">删除</div>
         `;
@@ -129,71 +124,12 @@ window.ContextMenus = {
             case 'ocr-lyrics':
                 await this.showOcrImportDialog(song);
                 break;
-            case 'classify':
-                await this.showClassifyDialog(song);
-                break;
             case 'delete':
                 await this.deleteSong(song.id);
                 break;
         }
 
         this.contextMenuSong = null;
-    },
-
-    // 分类选择（音乐 / 播客 / 听力）
-    async showClassifyDialog(song) {
-        const typeNames = { music: '音乐', podcast: '播客', listening: '听力' };
-        const currentType = song.content_type || 'music';
-
-        const dialog = document.createElement('div');
-        dialog.className = 'modal-overlay';
-        dialog.innerHTML = `
-            <div class="modal-content" style="width: 360px;">
-                <div class="modal-header">
-                    <h3>选择分类</h3>
-                    <button class="close-btn" aria-label="关闭">×</button>
-                </div>
-                <div class="modal-body">
-                    <div class="playlist-list" id="classify-list">
-                        ${Object.entries(typeNames).map(([value, name]) => `
-                            <label class="playlist-item ${value === currentType ? 'disabled' : ''}">
-                                <input type="radio" name="content-type" value="${value}" ${value === currentType ? 'checked disabled' : ''}>
-                                <span>${name}</span>
-                                <small>${value === currentType ? '当前分类' : ''}</small>
-                            </label>
-                        `).join('')}
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button class="btn btn-secondary" data-role="cancel">取消</button>
-                    <button class="btn btn-primary" id="save-classify-btn">保存</button>
-                </div>
-            </div>
-        `;
-
-        document.body.appendChild(dialog);
-
-        const closeDialog = () => dialog.remove();
-        dialog.querySelector('.close-btn').addEventListener('click', closeDialog);
-        dialog.querySelector('[data-role="cancel"]').addEventListener('click', closeDialog);
-
-        dialog.querySelector('#save-classify-btn').addEventListener('click', async () => {
-            const checked = dialog.querySelector('input[name="content-type"]:checked:not(:disabled)');
-            if (!checked) {
-                closeDialog();
-                return;
-            }
-
-            try {
-                await electronAPI.database.updateSong(song.id, { content_type: checked.value });
-                this.showMessage(`已分类为「${typeNames[checked.value]}」`, 'success');
-                closeDialog();
-                await this.refreshCurrentView();
-            } catch (error) {
-                logger.error('修改分类失败:', error);
-                this.showMessage('修改分类失败: ' + error.message, 'error');
-            }
-        });
     },
 
     // ---------- 输入框右键菜单 ----------

@@ -1,12 +1,11 @@
 // 音乐库 / 视图 / 搜索（mixin：挂载到 MusicPlayer.prototype）
 // 支持内容分类视图：type-music / type-podcast / type-listening
 window.LibraryUI = {
-    // 加载全部内容（所有分类）
+    // 加载全部内容
     async loadMusicLibrary() {
         try {
             const songs = await electronAPI.database.getSongs();
             this.allSongs = songs;
-            this.updateTypeCounts();
             this.applyViewFilter();
 
             if (this.playlist.length === 0) {
@@ -23,33 +22,9 @@ window.LibraryUI = {
     // 根据当前视图过滤播放列表
     applyViewFilter() {
         if (!this.allSongs) this.allSongs = [];
-
-        if (this.currentView && this.currentView.startsWith('type-')) {
-            const type = this.currentView.replace('type-', '');
-            this.playlist = this.allSongs.filter(s => (s.content_type || 'music') === type);
-        } else {
-            this.playlist = this.allSongs;
-        }
-
+        this.playlist = this.allSongs;
         this.renderSongsList();
         this.updateCurrentViewCount();
-    },
-
-    // 更新分类计数徽标
-    updateTypeCounts() {
-        const counts = { music: 0, podcast: 0, listening: 0 };
-        (this.allSongs || []).forEach(song => {
-            const type = song.content_type || 'music';
-            if (counts[type] !== undefined) counts[type]++;
-        });
-
-        const setCount = (id, value) => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = value;
-        };
-        setCount('count-music', counts.music);
-        setCount('count-podcast', counts.podcast);
-        setCount('count-listening', counts.listening);
     },
 
     // 视图标题
@@ -57,9 +32,6 @@ window.LibraryUI = {
         switch (this.currentView) {
             case 'all-songs': return '全部内容';
             case 'recent': return '最近播放';
-            case 'type-music': return '音乐';
-            case 'type-podcast': return '播客';
-            case 'type-listening': return '听力';
             default:
                 return this.currentPlaylistName || '歌单';
         }
@@ -70,9 +42,6 @@ window.LibraryUI = {
         switch (this.currentView) {
             case 'all-songs': return 'library';
             case 'recent': return 'recent';
-            case 'type-music': return 'type-music';
-            case 'type-podcast': return 'type-podcast';
-            case 'type-listening': return 'type-listening';
             default:
                 return this.currentView.startsWith('playlist-') ? 'playlist' : 'library';
         }
@@ -106,27 +75,6 @@ window.LibraryUI = {
                 icon: '🎵',
                 title: '歌单还是空的',
                 text: '右键条目并选择"添加到歌单"，把喜欢的内容收进来',
-                slogan: '',
-                actions: false
-            },
-            'type-music': {
-                icon: '🎵',
-                title: '音乐分类下还没有内容',
-                text: '右键条目可以选择分类（音乐 / 播客 / 听力）',
-                slogan: '',
-                actions: false
-            },
-            'type-podcast': {
-                icon: '🎙',
-                title: '播客分类下还没有内容',
-                text: '右键条目可以选择分类（音乐 / 播客 / 听力）',
-                slogan: '',
-                actions: false
-            },
-            'type-listening': {
-                icon: '🎧',
-                title: '听力分类下还没有内容',
-                text: '右键条目可以选择分类（音乐 / 播客 / 听力）',
                 slogan: '',
                 actions: false
             }
@@ -344,25 +292,6 @@ window.LibraryUI = {
                 case 'recent':
                     await this.loadRecentlyPlayed();
                     break;
-                case 'type-music':
-                case 'type-podcast':
-                case 'type-listening': {
-                    // 按分类过滤
-                    const type = view.replace('type-', '');
-                    if (!this.allSongs) {
-                        const songs = await electronAPI.database.getSongs();
-                        this.allSongs = songs;
-                        this.updateTypeCounts();
-                    }
-                    this.playlist = this.allSongs.filter(s => (s.content_type || 'music') === type);
-                    this.renderSongsList();
-                    if (this.playlist.length === 0) {
-                        this.renderEmptyState(view);
-                    } else {
-                        this.hideEmptyState();
-                    }
-                    break;
-                }
                 case 'all-songs':
                 default:
                     view = 'all-songs';
@@ -441,11 +370,6 @@ window.LibraryUI = {
             switch (this.currentView) {
                 case 'recent':
                     await this.loadRecentlyPlayed();
-                    break;
-                case 'type-music':
-                case 'type-podcast':
-                case 'type-listening':
-                    await this.switchView(this.currentView);
                     break;
                 default:
                     // 歌单视图
