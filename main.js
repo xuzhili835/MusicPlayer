@@ -77,12 +77,18 @@ class BiliMusicPlayer {
             // 数据库先于目录初始化：音乐目录可能配置在数据库设置里（自定义存储位置）
             await this.database.initialize();
             await this.ensureDirectories();
-            
-            // 设置工具（检查并下载必要的工具）
-            await this.setupTools();
+
+            // ⚠️ IPC 必须先于窗口创建注册：createMainWindow 加载页面是异步的，
+            // 若渲染进程先跑起来而 handler 未注册，所有 invoke 报 "No handler registered"，
+            // 初始化中断在事件绑定之前 → 全按钮无响应（含自绘关闭按钮）。
+            // 曾因 setupTools 的 await（校验大工具文件耗时）插在中间，打包版必现、dev 不复现
+            this.setupIPC();
 
             this.createMainWindow();
-            this.setupIPC();
+
+            // 工具检查放在 IPC 与窗口之后：仅影响下载/转写功能可用性，不阻塞任何 IPC
+            await this.setupTools();
+
             await this.initPrivacy();
             this.scheduleUpdateCheck();
 

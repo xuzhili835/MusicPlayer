@@ -57,10 +57,12 @@ class MusicPlayer {
 
             this.loadSettings();
 
-            await this.initializeUI();
-
+            // ⚠️ 先绑定事件（不依赖任何异步数据），再初始化数据——
+            // 即使数据加载失败，窗口控制/播放器按钮仍可交互，不会出现"整个窗口死掉"
             this.setupEventListeners();
             this.setupAudioEvents();
+
+            await this.initializeUI();
 
             logger.info('事件监听器设置完成');
 
@@ -78,12 +80,21 @@ class MusicPlayer {
             logger.error('播放器初始化失败:', error);
             this.showMessage('播放器初始化失败，请重启应用', 'error');
 
-            if (!this.retryInitialization) {
-                this.retryInitialization = true;
-                setTimeout(() => {
-                    this.initializePlayer();
-                }, 2000);
-            }
+            // 兜底：确保事件已绑定（窗口按钮可用），并安排一次延迟重试加载
+            try {
+                this.setupEventListeners();
+                this.setupAudioEvents();
+            } catch (e) { /* 忽略 */ }
+
+            setTimeout(async () => {
+                try {
+                    await this.loadMusicLibrary();
+                    await this.loadPlaylistsToSidebar();
+                    this.showMessage('内容已恢复加载', 'success');
+                } catch (e) {
+                    logger.error('重试加载失败:', e);
+                }
+            }, 2500);
         }
     }
 
