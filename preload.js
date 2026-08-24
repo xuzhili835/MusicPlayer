@@ -100,12 +100,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
             const subscription = (event, data) => callback(data);
             ipcRenderer.on('download-stage-progress', subscription);
             return () => ipcRenderer.removeListener('download-stage-progress', subscription);
+        },
+        onLyricsProgress: (callback) => {
+            const subscription = (event, data) => callback(data);
+            ipcRenderer.on('lyrics-download-progress', subscription);
+            return () => ipcRenderer.removeListener('lyrics-download-progress', subscription);
         }
     },
 
     // 桌面歌词窗口专用（歌词窗口内联脚本使用，走事件而非 invoke）
     desktopLyrics: {
         close: () => ipcRenderer.send('lyrics-window-close'),
+        toggleLock: () => ipcRenderer.send('lyrics-window-lock-toggle'),
+        onLockChanged: (callback) => {
+            ipcRenderer.on('lyrics-lock-changed', (event, locked) => callback(locked));
+        },
         dragStart: (data) => ipcRenderer.send('lyrics-window-drag-start', data),
         dragMove: (data) => ipcRenderer.send('lyrics-window-drag-move', data),
         dragEnd: () => ipcRenderer.send('lyrics-window-drag-end')
@@ -182,12 +191,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     lyrics: {
         get: (songTitle) => ipcRenderer.invoke('lyrics-get', songTitle),
         download: (videoUrl, songTitle) => ipcRenderer.invoke('lyrics-download', videoUrl, songTitle),
-        save: (songTitle, lrcContent) => ipcRenderer.invoke('lyrics-save', songTitle, lrcContent),
+        save: (songTitle, lrcContent, source) => ipcRenderer.invoke('lyrics-save', songTitle, lrcContent, source),
         getMissing: () => ipcRenderer.invoke('lyrics-get-missing'),
+        getExisting: () => ipcRenderer.invoke('lyrics-get-existing'),
+        matchOnline: (songId) => ipcRenderer.invoke('lyrics-match-online', songId),
+        align: (songId) => ipcRenderer.invoke('lyrics-align', songId),
+        adjustOffset: (songTitle, deltaMs) => ipcRenderer.invoke('lyrics-adjust-offset', songTitle, deltaMs),
 
         // 桌面歌词窗口
         toggleWindow: () => ipcRenderer.invoke('lyrics-window-toggle'),
-        updateWindow: (text) => ipcRenderer.invoke('lyrics-window-update', text)
+        updateWindow: (text) => ipcRenderer.invoke('lyrics-window-update', text),
+        // 主进程侧窗口变化（用户点 × 关闭等）→ 同步「词」按钮三态
+        onWindowVisibility: (callback) => {
+            const subscription = (event, visible) => callback(visible);
+            ipcRenderer.on('lyrics-window-visibility', subscription);
+            return () => ipcRenderer.removeListener('lyrics-window-visibility', subscription);
+        }
     },
 
     // 音量分析功能

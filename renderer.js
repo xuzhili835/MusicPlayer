@@ -150,9 +150,6 @@ class MusicPlayer {
                         case 'download-btn':
                             this.showDownloadDialog();
                             break;
-                        case 'lyrics-window-btn':
-                            this.toggleLyricsWindow();
-                            break;
                         case 'theme-toggle-btn':
                             this.toggleTheme();
                             break;
@@ -173,6 +170,24 @@ class MusicPlayer {
         this.bindClick('prev-btn', () => this.previousSong());
         this.bindClick('next-btn', () => this.nextSong());
         this.bindClick('play-mode-btn', () => this.togglePlayMode());
+
+        // 「词」桌面歌词按钮（三态：无歌词/有歌词未开窗/开窗中）
+        this.bindClick('desktop-lyrics-btn', () => this.onDesktopLyricsButton());
+        // 桌面歌词窗口被 × 关闭等主进程侧变化时，同步按钮状态
+        if (electronAPI.lyrics.onWindowVisibility) {
+            electronAPI.lyrics.onWindowVisibility((visible) => this.onLyricsWindowVisibility(visible));
+        }
+
+        // 主窗口歌词面板：点封面/歌名打开，点关闭/遮罩收起
+        this.bindClick('current-cover', () => this.toggleLyricsPanel());
+        this.bindClick('current-title', () => this.toggleLyricsPanel());
+        this.bindClick('lyrics-panel-close', () => this.toggleLyricsPanel());
+        const lyricsOverlay = document.getElementById('lyrics-panel-overlay');
+        if (lyricsOverlay) {
+            lyricsOverlay.addEventListener('click', (e) => {
+                if (e.target === lyricsOverlay) this.toggleLyricsPanel();
+            });
+        }
 
         // 听力特性：倍速 / A-B 复读 / 睡眠定时
         // 注意 stopPropagation：点击事件若冒泡到 document 的弹出菜单关闭器，
@@ -277,13 +292,13 @@ class MusicPlayer {
             this.isPlaying = true;
             this.updatePlayButton('playing');
             this.updateCurrentSongHighlight();
+            // 幂等启动常驻歌词同步循环
             this.startLyricsSync();
         });
 
         this.audio.addEventListener('pause', () => {
             this.isPlaying = false;
             this.updatePlayButton('paused');
-            this.stopLyricsSync();
         });
 
         this.audio.addEventListener('timeupdate', () => {
@@ -296,6 +311,9 @@ class MusicPlayer {
             this.updateABRegion();
             this.updateLyrics();
         });
+
+        // 歌词同步循环常驻启动（不依赖播放状态，'play' 里的启动是幂等兜底）
+        this.startLyricsSync();
 
         this.audio.addEventListener('ended', () => {
             this.handleSongEnded();
@@ -311,7 +329,8 @@ class MusicPlayer {
     setupDialogEvents() {
         // 下载对话框
         this.bindClick('download-dialog-close', () => this.hideDownloadDialog());
-        this.bindClick('download-cancel-btn', () => this.cancelDownload());
+        // 底部按钮只负责关闭对话框；下载中的真正取消在任务面板的 ×
+        this.bindClick('download-cancel-btn', () => this.hideDownloadDialog());
         this.bindClick('download-start-btn', () => this.startDownload());
 
         // 创建歌单对话框
@@ -355,7 +374,19 @@ class MusicPlayer {
 
         // 后台下载：全局进度订阅（更新标题栏徽标）+ 徽标取消按钮
         this.setupDownloadIndicatorListeners();
-        this.bindClick('download-indicator-cancel', () => this.cancelBackgroundDownload());
+
+        // 后台任务：标题栏徽标点击展开任务面板；点面板外关闭
+        const indicator = document.getElementById('download-indicator');
+        if (indicator) {
+            indicator.addEventListener('click', (e) => { e.stopPropagation(); this.toggleTaskPanel(); });
+        }
+        document.addEventListener('click', (e) => {
+            const panel = document.getElementById('task-panel');
+            const ind = document.getElementById('download-indicator');
+            if (panel && panel.style.display !== 'none' && !panel.contains(e.target) && !ind.contains(e.target)) {
+                panel.style.display = 'none';
+            }
+        });
 
         // 更新检查：主进程静默检查发现新版本时弹提示
         if (electronAPI.updater && electronAPI.updater.onUpdateAvailable) {

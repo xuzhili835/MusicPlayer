@@ -100,6 +100,9 @@ class ToolsManager {
                         'https://ghproxy.com/https://github.com/ggerganov/whisper.cpp/releases/download/v1.7.6/whisper-bin-x64.zip'
                     ],
                     filename: 'whisper-cli.exe',
+                    // whisper.cpp 各 release 的可执行名不统一（whisper-cli.exe / whisper_cli.exe / 旧版 whisper.exe），
+                    // 全部按候选探测，避免"下载成功却找不到工具"的死循环
+                    altFilenames: ['whisper_cli.exe', 'whisper.exe'],
                     isArchive: true
                 }
             }
@@ -107,12 +110,12 @@ class ToolsManager {
 
         // whisper 语音识别模型（用户按需选择下载，存 userData/models/）
         // 所有规格均为多语言模型（中/英/日/俄/法/德等 99 种语言自动检测）
-        // 顺序即展示顺序：推荐的 Base 置顶
+        // 顺序即展示顺序：Base 更快，Small 是歌词识别的默认精度档。
         this.modelsDir = path.join(userDataPath, 'models');
         this.whisperModels = {
             base: {
                 label: 'Base',
-                desc: '推荐 · 速度与精度均衡',
+                desc: '速度与精度均衡',
                 sizeText: '约 142 MB',
                 urls: [
                     'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-base.bin',
@@ -122,7 +125,7 @@ class ToolsManager {
             },
             small: {
                 label: 'Small',
-                desc: '精度较高，速度较慢',
+                desc: '推荐 · 歌词准确率更高，速度较慢',
                 sizeText: '约 466 MB',
                 urls: [
                     'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin',
@@ -186,28 +189,34 @@ class ToolsManager {
     }
     
     // 获取工具的实际可用路径
+    // 工具的可执行文件候选名（主名 + 历史版本别名）
+    getCandidateFilenames(toolName) {
+        const platformKey = this.platform === 'win32' ? 'windows' :
+                           this.platform === 'darwin' ? 'darwin' : 'linux';
+        const config = this.tools[toolName]?.[platformKey];
+        if (!config) return [];
+        return [config.filename, ...(config.altFilenames || [])];
+    }
+
     async getAvailableToolPath(toolName) {
         const paths = this.getToolPath(toolName);
         if (!paths) return null;
-        
-        // 按优先级检查路径
-        const pathsToCheck = [
-            { type: 'app', path: paths.app },
-            { type: 'user', path: paths.user }
-        ];
-        
-        for (const pathInfo of pathsToCheck) {
-            try {
-                await fs.access(pathInfo.path);
-                if (await this.checkFilePermissions(pathInfo.path)) {
-                    console.log(`找到 ${toolName} 工具 (${pathInfo.type}): ${pathInfo.path}`);
-                    return pathInfo.path;
+
+        // 按优先级检查路径（含候选文件名：whisper.cpp 各版本可执行名不统一）
+        for (const dir of [this.appBinDir, this.userBinDir]) {
+            for (const name of this.getCandidateFilenames(toolName)) {
+                const candidate = path.join(dir, name);
+                try {
+                    await fs.access(candidate);
+                    if (await this.checkFilePermissions(candidate)) {
+                        return candidate;
+                    }
+                } catch (error) {
+                    // 继续检查下一个候选
                 }
-            } catch (error) {
-                // 继续检查下一个路径
             }
         }
-        
+
         return null;
     }
     
@@ -325,8 +334,11 @@ class ToolsManager {
     async downloadFile(url, filePath, onProgress) {
         return new Promise((resolve, reject) => {
             const client = url.startsWith('https://') ? https : http;
-            
-            client.get(url, (response) => {
+
+            // 带浏览器 UA：ModelScope 等源会拒绝无 UA 的请求（403）
+            client.get(url, {
+                headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' }
+            }, (response) => {
                 // 处理重定向
                 if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
                     return this.downloadFile(response.headers.location, filePath, onProgress)
@@ -367,7 +379,7 @@ class ToolsManager {
     // 解压工具（使用 extract-zip，压缩包内可能存在多级目录）
     async extractTool(archivePath, outputPath, toolName) {
         const extract = require('extract-zip');
-        const targetName = path.basename(outputPath); // 如 ffmpeg.exe / ffprobe.exe
+        const targetName = path.basename(outputPath); // 如 ffmpeg.exe / whisper-cli.exe
         const extractDir = path.join(this.userBinDir, `${toolName}_extracted`);
 
         // 清理可能残留的解压目录
@@ -375,7 +387,27 @@ class ToolsManager {
 
         await extract(archivePath, { dir: extractDir });
 
-        // 递归查找目标可执行文件
+        // whisper 特例：exe 依赖同目录的 DLL（ggml*.dll / whisper.dll / SDL2.dll），
+        // 必须把 exe 所在目录的全部文件一起拷到用户bin，否则启动报缺 dll
+        if (toolName === 'whisper') {
+            const found = await this.findFileInDir(extractDir, targetName);
+            if (!found) {
+                throw new Error(`在压缩包中未找到 ${targetName}`);
+            }
+            const srcDir = path.dirname(found);
+            const entries = await fs.readdir(srcDir);
+            for (const f of entries) {
+                const stat = await fs.stat(path.join(srcDir, f));
+                if (stat.isFile()) {
+                    await fs.copyFile(path.join(srcDir, f), path.join(this.userBinDir, f));
+                }
+            }
+            await fs.rm(extractDir, { recursive: true, force: true });
+            console.log(`已解压 whisper（含依赖 DLL）到: ${this.userBinDir}`);
+            return;
+        }
+
+        // 其余工具：递归查找目标可执行文件
         const foundPath = await this.findFileInDir(extractDir, targetName);
         if (!foundPath) {
             throw new Error(`在压缩包中未找到 ${targetName} 可执行文件`);
@@ -503,7 +535,7 @@ class ToolsManager {
                 key,
                 label: config.label,
                 desc: config.desc,
-                recommended: key === 'base',
+                recommended: key === 'small',
                 sizeText: config.sizeText,
                 downloaded,
                 sizeBytes
@@ -552,6 +584,48 @@ class ToolsManager {
         }
     }
 
+    // ==================== VAD 模型（silero 人声活动检测） ====================
+    // 配合 whisper 识别前过滤无人声段：纯音乐不再产出 [Muziek] 幻听，识别也更快。
+    // 体积小（约 0.9MB），首次转写时自动下载，失败则静默降级为无 VAD 识别。
+
+    getVadModelPath() {
+        return path.join(this.modelsDir, 'ggml-silero-vad.bin');
+    }
+
+    async isVadModelDownloaded() {
+        try {
+            const stats = await fs.stat(this.getVadModelPath());
+            return stats.size > 100 * 1024; // 大于 100KB 视为完整
+        } catch (error) {
+            return false;
+        }
+    }
+
+    async downloadVadModel(onProgress = null) {
+        await fs.mkdir(this.modelsDir, { recursive: true });
+        const finalPath = this.getVadModelPath();
+        const tempPath = finalPath + '.part';
+        try { await fs.unlink(tempPath); } catch (error) { /* 忽略 */ }
+
+        // 实测 v1.7.6 whisper-cli 对 v5.1.2 / v6.2.0 均可加载；ModelScope 国内直连最快
+        const urls = [
+            'https://modelscope.cn/models/shoujiekeji/Whisper-large-v3/resolve/master/ggml-silero-v6.2.0.bin',
+            'https://huggingface.co/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin',
+            'https://hf-mirror.com/ggml-org/whisper-vad/resolve/main/ggml-silero-v5.1.2.bin'
+        ];
+        await this.downloadWithRetry(urls, tempPath, onProgress);
+
+        const stats = await fs.stat(tempPath);
+        if (stats.size < 100 * 1024) {
+            await fs.unlink(tempPath).catch(() => {});
+            throw new Error('VAD 模型下载不完整，请重试');
+        }
+
+        await fs.rename(tempPath, finalPath);
+        console.log(`VAD 模型下载完成: ${finalPath}`);
+        return finalPath;
+    }
+
     // 获取执行命令（优先使用应用bin目录工具，然后使用用户bin目录工具，最后使用系统工具）
     // 例外：yt-dlp 优先用户bin目录 —— 站点风控演进快，用户通过"强制重新下载工具"
     // 拿到的最新版应当覆盖打包时内置的旧版
@@ -575,17 +649,17 @@ class ToolsManager {
                 }
             }
 
-            // 1. 优先检查应用bin目录
-            const paths = this.getToolPath(toolName);
-            if (paths) {
+            // 1. 优先检查应用bin目录（含候选文件名）
+            for (const name of this.getCandidateFilenames(toolName)) {
+                const candidate = path.join(this.appBinDir, name);
                 try {
-                    await fs.access(paths.app);
-                    if (await this.checkFilePermissions(paths.app)) {
-                        console.log(`使用应用bin目录工具: ${paths.app}`);
-                        return paths.app;
+                    await fs.access(candidate);
+                    if (await this.checkFilePermissions(candidate)) {
+                        console.log(`使用应用bin目录工具: ${candidate}`);
+                        return candidate;
                     }
                 } catch (error) {
-                    console.log(`应用bin目录中没有 ${toolName}: ${error.message}`);
+                    // 继续检查下一个候选
                 }
             }
             

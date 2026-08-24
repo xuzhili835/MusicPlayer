@@ -6,6 +6,8 @@ window.LibraryUI = {
         try {
             const songs = await electronAPI.database.getSongs();
             this.allSongs = songs;
+            // 拉取"已有歌词"清单（列表 ♪ 标记，避免重复识别/忘记识别）
+            if (this.refreshLyricsStems) await this.refreshLyricsStems();
             this.applyViewFilter();
 
             if (this.playlist.length === 0) {
@@ -142,17 +144,18 @@ window.LibraryUI = {
             }
         });
 
-        // 封面（无缩略图时留空底）
+        // 封面（无缩略图时留空底）；标题旁 ♪ 标记 = 已有歌词
         const coverSrc = song.thumbnail ? this.resolveMediaUrl(song.thumbnail) : null;
         const plays = song.play_count || 0;
+        const hasLyrics = this.songHasLyrics ? this.songHasLyrics(song) : false;
         item.innerHTML = `
             <div class="song-cover">${coverSrc ? `<img src="${utils.escapeHtml(coverSrc)}" alt="" loading="lazy" onerror="this.remove()">` : ''}</div>
             <div class="song-info-cell">
-                <div class="song-title" title="${utils.escapeHtml(song.title)}">${utils.escapeHtml(song.title)}</div>
+                <div class="song-title" title="${utils.escapeHtml(song.title)}">${hasLyrics ? '<span class="lyric-mark" title="已有歌词">♪</span>' : ''}${utils.escapeHtml(song.title)}</div>
             </div>
             <div class="song-cell-artist">${utils.escapeHtml(song.artist || '未知艺术家')}</div>
-            <div class="song-plays${plays >= 10 ? ' hot' : ''}" title="播放 ${plays} 次">${plays}</div>
             <div class="song-duration">${utils.formatTime(song.duration)}</div>
+            <div class="song-plays" title="播放 ${plays} 次">${plays}</div>
         `;
 
         // 双击播放

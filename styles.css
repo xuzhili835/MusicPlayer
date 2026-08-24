@@ -647,7 +647,7 @@ html[data-theme="light"] .icon-moon { display: block; }
 
 .songs-header {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 170px 48px 56px;
+    grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1fr) 56px 44px;
     gap: 12px;
     padding: 6px 12px;
     font-size: 11px;
@@ -655,12 +655,18 @@ html[data-theme="light"] .icon-moon { display: block; }
     text-transform: uppercase;
     letter-spacing: 0.6px;
     color: var(--text-faint);
-    border-bottom: 1px solid var(--border);
     position: sticky;
     top: 0;
     background: var(--bg);
     z-index: 2;
     user-select: none;
+    border-bottom: 1px solid var(--border);
+}
+
+/* 数字列右对齐，与数据行一致 */
+.songs-header .song-col-plays,
+.songs-header .song-col-duration {
+    text-align: right;
 }
 
 .songs-list {
@@ -671,7 +677,7 @@ html[data-theme="light"] .icon-moon { display: block; }
 
 .song-item {
     display: grid;
-    grid-template-columns: 44px minmax(0, 1fr) 170px 56px;
+    grid-template-columns: 44px minmax(0, 2fr) minmax(0, 1fr) 56px 44px;
     gap: 12px;
     align-items: center;
     padding: 7px 12px;
@@ -728,6 +734,14 @@ html[data-theme="light"] .icon-moon { display: block; }
     text-overflow: ellipsis;
 }
 
+/* 已有歌词标记：标题前小音符，低调提示 */
+.lyric-mark {
+    color: var(--accent);
+    font-size: 11px;
+    margin-right: 4px;
+    opacity: 0.8;
+}
+
 .song-artist {
     font-size: 12px;
     color: var(--text-muted);
@@ -752,16 +766,13 @@ html[data-theme="light"] .icon-moon { display: block; }
 }
 
 .song-plays {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-faint);
     font-variant-numeric: tabular-nums;
     text-align: right;
+    opacity: 0.65; /* 播放次数是记录性数据，弱化显示 */
 }
 
-.song-plays.hot {
-    color: var(--accent);
-    font-weight: 600;
-}
 
 /* 标题跑马灯（超长时滚动） */
 .song-title.scrolling span {
@@ -913,6 +924,187 @@ html[data-theme="light"] .icon-moon { display: block; }
     color: var(--accent);
     background: var(--accent-soft);
 }
+
+/* 「词」桌面歌词按钮三态：无歌词（暗灰）/ 有歌词未开窗（主文字色）/ 开窗中（樱花粉） */
+.lyrics-word-btn .lyrics-word {
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.lyrics-word-btn {
+    color: var(--text);
+}
+
+.lyrics-word-btn:hover {
+    color: var(--accent-hover);
+}
+
+.lyrics-word-btn.no-lyrics {
+    color: var(--text-faint);
+}
+
+.lyrics-word-btn.no-lyrics:hover {
+    color: var(--text-muted);
+}
+
+.lyrics-word-btn.lyrics-open {
+    color: var(--accent);
+    background: var(--accent-soft);
+}
+
+/* ==================== 主窗口歌词面板 ==================== */
+/* 点击播放栏封面/歌名打开：当前行高亮居中，点击行 seek */
+#lyrics-panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(8px);
+    z-index: 200;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    animation: lyrics-panel-fade 0.18s ease;
+}
+
+@keyframes lyrics-panel-fade {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+#lyrics-panel {
+    width: min(720px, 86vw);
+    margin: 7vh 0 12vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-elevated, var(--bg));
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.45);
+    overflow: hidden;
+}
+
+.lyrics-panel-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 18px 10px;
+    border-bottom: 1px solid var(--border);
+}
+
+.lyrics-panel-title {
+    flex: 1;
+    min-width: 0;
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lyrics-panel-offset {
+    font-size: 11.5px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 8px;
+    border-radius: 8px;
+    flex-shrink: 0;
+}
+
+.lyrics-panel-offset:empty { display: none; }
+
+/* 来源徽章（在线/本地/字幕/手动），带来源色区分 */
+.lyrics-panel-source {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 2px 9px;
+    border-radius: 8px;
+    flex-shrink: 0;
+    max-width: 90px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lyrics-panel-source:empty { display: none; }
+
+.lyrics-panel-close {
+    width: 26px;
+    height: 26px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 17px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.lyrics-panel-close:hover {
+    background: var(--bg-hover, rgba(128, 128, 128, 0.15));
+    color: var(--text);
+}
+
+.lyrics-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 28px 34px 40px;
+    /* 上下渐隐遮罩，滚动到边缘的行自然淡出（专业歌词页惯例） */
+    -webkit-mask-image: linear-gradient(transparent 0, #000 9%, #000 88%, transparent 100%);
+    mask-image: linear-gradient(transparent 0, #000 9%, #000 88%, transparent 100%);
+    scrollbar-width: thin;
+}
+
+.lyrics-line {
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--text-muted);
+    padding: 7px 4px;
+    border-radius: 8px;
+    transition: color 0.18s ease, transform 0.18s ease;
+    word-break: break-word;
+}
+
+.lyrics-line:hover {
+    color: var(--text);
+    background: var(--bg-hover, rgba(128, 128, 128, 0.1));
+}
+
+.lyrics-line.active {
+    color: var(--accent);
+    font-weight: 600;
+    transform: scale(1.02);
+    transform-origin: left center;
+}
+
+.lyrics-panel-empty {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    color: var(--text-muted);
+    font-size: 14px;
+}
+
+.lyrics-panel-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+/* 播放栏封面与歌名可点击展开歌词面板 */
+.song-cover,
+#current-title {
+    cursor: pointer;
+}
+
+
 
 /* ---------- 倍速 / A-B 复读 / 睡眠定时 ---------- */
 .speed-btn {
@@ -1427,6 +1619,16 @@ input[type="range"]:disabled {
     user-select: none;
 }
 
+/* 「获取歌词」选项下的本地识别模型状态行（未安装时可就地下载） */
+.download-model-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 6px;
+    padding-left: 23px;
+    font-size: 12px;
+}
+
 .download-option:hover {
     color: var(--text);
 }
@@ -1489,6 +1691,133 @@ input[type="range"]:disabled {
 .indicator-cancel:hover {
     background: var(--error-soft);
     color: var(--error);
+}
+
+/* ---------- 后台任务面板（多任务列表） ---------- */
+.task-panel {
+    position: fixed;
+    top: 48px;
+    right: 10px;
+    width: 340px;
+    max-width: calc(100vw - 24px);
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    box-shadow: var(--shadow-lg);
+    z-index: 2600;
+    overflow: hidden;
+    animation: modal-slide-up 0.15s ease;
+}
+
+.task-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
+}
+
+.task-panel-count {
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    padding: 1px 8px;
+    border-radius: 9px;
+}
+
+.task-list {
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 8px;
+}
+
+.task-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    padding: 9px 10px;
+    border-radius: 9px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    margin-bottom: 6px;
+}
+
+.task-item-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.task-item-icon {
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 7px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: 13px;
+}
+
+.task-item-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-item-cancel {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-faint);
+    font-size: 14px;
+    border-radius: 50%;
+    cursor: pointer;
+}
+
+.task-item-cancel:hover {
+    background: var(--error-soft);
+    color: var(--error);
+}
+
+.task-item-status {
+    font-size: 11.5px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.task-item.done .task-item-icon {
+    background: var(--success-soft);
+    color: var(--success);
+}
+
+.task-item.failed .task-item-icon {
+    background: var(--error-soft);
+    color: var(--error);
+}
+
+.task-empty {
+    padding: 18px 10px;
+    text-align: center;
+    font-size: 12.5px;
+    color: var(--text-faint);
 }
 
 /* ---------- 歌曲信息 / 音量详情 ---------- */
@@ -2064,9 +2393,10 @@ input[type="range"]:disabled {
     }
     .songs-header,
     .song-item {
-        grid-template-columns: 40px minmax(0, 1fr) 48px 56px;
+        grid-template-columns: 40px minmax(0, 1fr) 48px;
     }
-    .song-col-artist, .song-cell-artist {
+    .song-col-artist, .song-cell-artist,
+    .song-col-plays, .song-plays {
         display: none;
     }
 }

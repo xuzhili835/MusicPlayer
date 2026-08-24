@@ -11,10 +11,16 @@ const ToolsManager = require('./tools-manager.js');
 // 统一的浏览器 UA（站点风控需要）
 const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
 
+// Chromium 的原生窗口遮挡跟踪会把置顶的透明歌词窗口误判为"被遮挡"而停止
+// 绘制，DWM 随后用白色填充整个内容区（主窗口最小化时必现）。官方文档明确
+// 该特性误判时症状即白屏，须在 app ready 之前禁用
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
 class BiliMusicPlayer {
     constructor() {
         this.mainWindow = null;
         this.lyricsWindow = null;
+        this.pendingDesktopLyric = '♪ 暂无歌词 ♪';
         this.database = new Database();
         this.isQuitting = false;
         
@@ -587,7 +593,10 @@ class BiliMusicPlayer {
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                preload: path.join(__dirname, 'preload.js')
+                preload: path.join(__dirname, 'preload.js'),
+                // 桌面歌词的同步循环跑在主窗口渲染进程：不关后台节流的话，
+                // 最小化/失焦时定时器被降频，桌面歌词会卡顿滞留
+                backgroundThrottling: false
             },
             title: 'Sakura Echo - 声织四季，瓣落成音',
             show: false,
@@ -626,84 +635,186 @@ class BiliMusicPlayer {
         }
 
         this.lyricsWindow = new BrowserWindow({
-            width: 800,
-            height: 120,
+            width: 820,
+            height: 112,
             frame: false,
             transparent: true,
+            // 透明窗口必须给透明背景色；Win11 圆角会给透明窗口画边框
+            backgroundColor: '#00000000',
+            roundedCorners: false,
             alwaysOnTop: true,
-            resizable: false,
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
-                preload: path.join(__dirname, 'preload.js')
+                preload: path.join(__dirname, 'preload.js'),
+                // 失焦/最小化主窗口时不节流（歌词推送在主窗口渲染进程）
+                backgroundThrottling: false
             },
             skipTaskbar: true
         });
+        // 置顶层级取 screen-saver，压过普通置顶窗口
+        this.lyricsWindow.setAlwaysOnTop(true, 'screen-saver');
+        this.lyricsLocked = true;
 
-        // 加载歌词窗口HTML（简单的歌词显示页面）
-        this.lyricsWindow.loadURL(`data:text/html;charset=utf-8,
+        // 白框根因：Electron 35.5.0~37 携带的 Chromium 补丁在窗口失活时错误
+        // 应用背景材质，给无框透明窗口画出白色非客户区（electron/electron#47946，
+        // 上游修复 PR #47386 随 Electron 38 发布，未 backport 到 37），已通过
+        // 升级 Electron 解决。此处再把 DWM 边框色设为 NONE 兜底，防止 DWM 给
+        // 无框窗口描边。此前拦截 WM_NCACTIVATE/WM_NCPAINT 的钩子实测无效，
+        // 且会吞掉消息阻断系统的自愈重绘，已移除
+        if (process.platform === 'win32') {
+            this.removeLyricsWindowDwmBorder();
+        }
+
+        // 加载歌词窗口HTML（桌面悬浮歌词：半透明胶囊底 + 换行过渡动画）
+        const lyricsHtml = `
             <!DOCTYPE html>
             <html>
             <head>
+                <meta charset="utf-8">
+                <!-- 空 title：页面无 title 时 Electron 会拿应用名当窗口标题，
+                     失焦/Alt+Tab 时在窗口顶部渲染出"软件名字" -->
+                <title></title>
                 <style>
+                    /* 显式置透明：html/body 默认白底会在透明窗口上渲染出白块 */
+                    html, body {
+                        background: rgba(0, 0, 0, 0) !important;
+                        overflow: hidden;
+                    }
                     body {
                         margin: 0;
-                        padding: 10px 20px;
-                        font-family: Arial, sans-serif;
+                        padding: 8px 30px 10px;
+                        font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
                         color: white;
-                        text-shadow: 2px 2px 4px rgba(0,0,0,0.8);
-                        background: rgba(0,0,0,0.3);
                         text-align: center;
                         user-select: none;
                         position: relative;
-                        border-radius: 8px;
-                        backdrop-filter: blur(10px);
                     }
+                    /* 半透明胶囊底：文字以外区域也有像素 alpha（Windows 透明窗口按
+                       像素命中点击，全透明区域会穿透导致拖不动），并保证任意桌面
+                       壁纸上可读。不用 backdrop-filter——Chromium 在 Windows 透明
+                       窗口上不支持，失焦时磨砂区退化成白块 */
                     .lyrics-container {
+                        -webkit-app-region: drag;
                         cursor: move;
-                        padding: 10px 0;
+                        background: rgba(15, 18, 28, 0.72);
+                        border: 1px solid rgba(255, 255, 255, 0.14);
+                        border-radius: 16px;
+                        padding: 8px 56px 10px 24px;
                     }
                     .lyrics {
-                        font-size: 24px;
-                        line-height: 1.5;
+                        font-size: 26px;
+                        font-weight: 600;
+                        line-height: 1.45;
+                        text-shadow:
+                            0 1px 3px rgba(0,0,0,0.9),
+                            0 0 2px rgba(0,0,0,0.7);
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
                     }
-                    .close-btn {
+                    .lyrics-next {
+                        font-size: 16px;
+                        line-height: 1.4;
+                        margin-top: 4px;
+                        color: rgba(255,255,255,0.75);
+                        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                    }
+                    /* 换行过渡：由注入脚本在文本变化时重启此动画 */
+                    @keyframes lyric-swap {
+                        from { opacity: 0.15; transform: translateY(7px); }
+                        to { opacity: 1; transform: none; }
+                    }
+                    .lyric-swap {
+                        animation: lyric-swap 0.38s ease-out;
+                    }
+                    @keyframes lyric-swap-next {
+                        from { opacity: 0; transform: translateY(5px); }
+                        to { opacity: 1; transform: none; }
+                    }
+                    .lyric-swap-next {
+                        animation: lyric-swap-next 0.38s ease-out 0.06s backwards;
+                    }
+                    .win-btn {
+                        -webkit-app-region: no-drag;
                         position: absolute;
-                        top: 5px;
-                        right: 8px;
-                        width: 20px;
-                        height: 20px;
-                        border-radius: 50%;
-                        background: rgba(255,255,255,0.2);
+                        top: 50%;
+                        transform: translateY(-50%);
+                        width: 26px;
+                        height: 26px;
+                        border-radius: 8px;
+                        background: transparent;
                         border: none;
-                        color: white;
-                        font-size: 14px;
+                        color: rgba(255,255,255,0.55);
                         cursor: pointer;
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        transition: all 0.3s ease;
-                        opacity: 0;
+                        transition: background 0.15s ease, color 0.15s ease;
+                    }
+                    .win-btn:hover {
+                        background: rgba(255,255,255,0.16);
+                        color: rgba(255,255,255,0.95);
+                    }
+                    /* 锁定（置顶）：图标点亮；解锁后回到暗淡的 ghost 态 */
+                    .lock-btn {
+                        right: 36px;
+                    }
+                    .lock-btn.locked {
+                        color: rgba(255,255,255,0.95);
+                    }
+                    .lock-btn.locked:hover {
+                        background: rgba(255,255,255,0.16);
+                    }
+                    .lock-btn .shackle-open { display: none; }
+                    .lock-btn:not(.locked) .shackle-closed { display: none; }
+                    .lock-btn:not(.locked) .shackle-open { display: block; }
+                    .close-btn {
+                        right: 8px;
                     }
                     .close-btn:hover {
-                        background: rgba(255,255,255,0.3);
-                        transform: scale(1.1);
-                    }
-                    body:hover .close-btn {
-                        opacity: 1;
+                        background: rgba(220,60,60,0.8);
+                        color: #fff;
                     }
                 </style>
             </head>
             <body>
-                <button class="close-btn" id="close-btn">×</button>
                 <div class="lyrics-container" id="lyrics-container">
                     <div class="lyrics" id="lyrics-text">♪ 暂无歌词 ♪</div>
+                    <div class="lyrics-next" id="lyrics-next"></div>
                 </div>
+                <button class="win-btn lock-btn locked" id="lock-btn" title="置顶锁定中，点击解除置顶">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="4" y="11" width="16" height="10" rx="2.5"></rect>
+                        <path class="shackle-closed" d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+                        <path class="shackle-open" d="M8 11V7a4 4 0 0 1 7.6-1.7"></path>
+                    </svg>
+                </button>
+                <button class="win-btn close-btn" id="close-btn" title="关闭桌面歌词">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                    </svg>
+                </button>
                 <script>
                     // 注意：contextIsolation 环境下没有 require，必须使用 preload 暴露的 API
                     const lyricsAPI = window.electronAPI ? window.electronAPI.desktopLyrics : null;
 
-                    let isDragging = false;
+                    // 置顶锁定切换 + 状态回推同步按钮外观
+                    const lockBtn = document.getElementById('lock-btn');
+                    lockBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (lyricsAPI) lyricsAPI.toggleLock();
+                    });
+                    if (lyricsAPI && lyricsAPI.onLockChanged) {
+                        lyricsAPI.onLockChanged((locked) => {
+                            lockBtn.classList.toggle('locked', !!locked);
+                            lockBtn.title = locked ? '置顶锁定中，点击解除置顶' : '未置顶，点击恢复置顶';
+                        });
+                    }
 
                     // 关闭按钮事件
                     document.getElementById('close-btn').addEventListener('click', (e) => {
@@ -711,54 +822,67 @@ class BiliMusicPlayer {
                         if (lyricsAPI) lyricsAPI.close();
                     });
 
-                    // 拖动功能
-                    const lyricsContainer = document.getElementById('lyrics-container');
-
-                    lyricsContainer.addEventListener('mousedown', (e) => {
-                        isDragging = true;
-                        if (!lyricsAPI) return;
-                        lyricsAPI.dragStart({
-                            startX: e.screenX,
-                            startY: e.screenY
-                        });
-                    });
-
-                    document.addEventListener('mousemove', (e) => {
-                        if (isDragging && lyricsAPI) {
-                            lyricsAPI.dragMove({
-                                screenX: e.screenX,
-                                screenY: e.screenY
-                            });
-                        }
-                    });
-
-                    document.addEventListener('mouseup', () => {
-                        if (isDragging) {
-                            isDragging = false;
-                            if (lyricsAPI) lyricsAPI.dragEnd();
-                        }
-                    });
-
-                    // 防止拖动时选中文字
-                    document.addEventListener('selectstart', (e) => {
-                        if (isDragging) {
-                            e.preventDefault();
-                        }
-                    });
                 </script>
             </body>
             </html>
-        `);
+        `;
+        // HTML 里的 %（如 CSS 的 50%）、# 等是 URL 保留字符，必须 percent-encode
+        // 后再拼 data URL——曾因裸拼被 URL 解析器截断，整页空白：无按钮、
+        // 不可拖动、只剩系统画的白框
+        this.lyricsWindow.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(lyricsHtml));
+
+        // 新窗口加载完成后再写入缓存内容。此前在 loadURL 尚未完成时执行脚本，
+        // 首次打开桌面歌词会丢失更新并一直显示默认文案。
+        this.lyricsWindow.webContents.once('did-finish-load', () => {
+            this.updateLyricsWindowText(this.pendingDesktopLyric);
+        });
 
         // 窗口关闭时
         this.lyricsWindow.on('closed', () => {
             this.lyricsWindow = null;
+            // 通知渲染端同步「词」按钮三态（用户直接点窗口 × 关闭的场景）
+            if (this.mainWindow && !this.mainWindow.isDestroyed()) {
+                this.mainWindow.webContents.send('lyrics-window-visibility', false);
+            }
         });
     }
 
-    // 显示歌词窗口
-    async showLyricsWindow(lyrics = '♪ 暂无歌词 ♪') {
+    // DWMWA_BORDER_COLOR(34) 设为 COLOR_NONE(-2)：Win11 可能给无框窗口
+    // （roundedCorners:false）描一圈 DWM 边框，透明窗口上失活时尤其显眼。
+    // 该属性一次设置持久生效，fire-and-forget 不阻塞开窗
+    removeLyricsWindowDwmBorder() {
+        if (!this.lyricsWindow || this.lyricsWindow.isDestroyed()) return;
+        const buf = this.lyricsWindow.getNativeWindowHandle();
+        const hwnd = buf.length === 8 ? buf.readBigUInt64LE(0).toString() : String(buf.readUInt32LE(0));
+        const script = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Dwm {
+  [DllImport(\\"dwmapi.dll\\")]
+  public static extern int DwmSetWindowAttribute(IntPtr h, int a, ref int v, int s);
+}
+"@
+$v = -2
+[Dwm]::DwmSetWindowAttribute([IntPtr]::new([Int64]::Parse("${hwnd}")), 34, [ref]$v, 4)`;
         try {
+            const p = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script],
+                { windowsHide: true, stdio: 'ignore' });
+            p.on('error', () => {});
+        } catch (e) { /* 兜底手段，失败不影响功能 */ }
+    }
+
+    // 显示歌词窗口
+    async showLyricsWindow(lyrics = null) {
+        try {
+            // 有新内容用新的；没传则保留渲染端最后推送的缓存。开窗瞬间把
+            // 缓存重置成占位文案、而渲染端去重缓存又判定"内容未变"不重推，
+            // 窗口就会一直停在"暂无歌词"（用户报告的"歌词卡住"根源之一）
+            if (typeof lyrics === 'string' && lyrics.trim()) {
+                this.pendingDesktopLyric = lyrics;
+            } else if (!this.pendingDesktopLyric) {
+                this.pendingDesktopLyric = '♪ 暂无歌词 ♪';
+            }
             if (!this.lyricsWindow) {
                 this.createLyricsWindow();
             }
@@ -767,17 +891,48 @@ class BiliMusicPlayer {
             this.lyricsWindow.show();
             this.lyricsWindow.focus();
             
-            // 更新歌词内容
-            await this.lyricsWindow.webContents.executeJavaScript(`
-                const lyricsElement = document.getElementById('lyrics-text');
-                if (lyricsElement) {
-                    lyricsElement.textContent = \`${lyrics.replace(/`/g, '\\`').replace(/\\/g, '\\\\')}\`;
-                }
-            `);
+            await this.updateLyricsWindowText(this.pendingDesktopLyric);
             
             return { success: true };
         } catch (error) {
             console.error('显示歌词窗口失败:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async updateLyricsWindowText(payload) {
+        // payload: { current, next }（双行）；兼容旧字符串调用（只更当前行）
+        const obj = typeof payload === 'string' ? { current: payload, next: '' } : (payload || {});
+        const current = (typeof obj.current === 'string' && obj.current.trim()) ? obj.current : '♪ 暂无歌词 ♪';
+        const next = typeof obj.next === 'string' ? obj.next.trim() : '';
+        this.pendingDesktopLyric = { current, next };
+        if (!this.lyricsWindow || this.lyricsWindow.isDestroyed() || this.lyricsWindow.webContents.isLoading()) {
+            return { success: true, pending: true };
+        }
+        try {
+            // JSON 序列化避免歌词中的反引号、反斜杠和换行破坏注入脚本。
+            // 必须包 IIFE：脚本在同一窗口上下文反复求值，顶层 const 会在
+            // 第二次执行时抛 "already been declared"，导致桌面歌词只在
+            // 开窗后更新一次就冻结（表现为"手动开关一次才更新一次"）。
+            // 文本变化时才写 DOM 并重启换行动画（reflow 重置 animation）。
+            await this.lyricsWindow.webContents.executeJavaScript(`
+                (() => {
+                    const setWithSwap = (id, text, cls) => {
+                        const el = document.getElementById(id);
+                        if (!el || el.textContent === text) return;
+                        el.textContent = text;
+                        el.classList.remove(cls);
+                        void el.offsetWidth;
+                        el.classList.add(cls);
+                    };
+                    setWithSwap('lyrics-text', ${JSON.stringify(current)}, 'lyric-swap');
+                    setWithSwap('lyrics-next', ${JSON.stringify(next)}, 'lyric-swap-next');
+                })();
+                'ok'
+            `);
+            return { success: true };
+        } catch (error) {
+            console.error('更新歌词窗口失败:', error);
             return { success: false, error: error.message };
         }
     }
@@ -1475,7 +1630,7 @@ class BiliMusicPlayer {
                     success: true,
                     toolAvailable: !!(await this.toolsManager.getExecutableCommand('whisper')),
                     models: await this.toolsManager.listWhisperModels(),
-                    currentModel: await this.database.getSetting('whisper_model', 'base')
+                    currentModel: await this.database.getSetting('whisper_model', 'small')
                 };
             } catch (error) {
                 return { success: false, error: error.message };
@@ -1528,6 +1683,16 @@ class BiliMusicPlayer {
             }
         });
 
+        // 已有歌词的标题主干集合（列表标记用，避免重复识别）
+        ipcMain.handle('lyrics-get-existing', async () => {
+            try {
+                const stems = await this.lyricsManager.listLyricsStems();
+                return { success: true, stems: Array.from(stems) };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
         // 音频转歌词（whisper 多语言自动检测 → LRC）
         ipcMain.handle('transcribe-song', async (event, songId) => {
             try {
@@ -1539,6 +1704,58 @@ class BiliMusicPlayer {
                 console.error('音频转写失败:', error);
                 return { success: false, error: error.message };
             }
+        });
+
+        // 在线歌词匹配（LRCLIB 免费开源歌词库：标题清洗 → 精确 get → 模糊 search + 时长门禁/纯文本兜底）
+        ipcMain.handle('lyrics-match-online', async (event, songId) => {
+            try {
+                const song = await this.database.getSongById(songId);
+                if (!song) return { success: false, error: '内容不存在' };
+                if (this.mainWindow) {
+                    this.mainWindow.webContents.send('transcribe-status', '正在匹配在线歌词库（LRCLIB）...');
+                }
+                const m = await this.lyricsManager.matchOnlineLyrics(song.title, song.artist, song.duration);
+                if (!m) {
+                    return { success: false, error: '在线歌词库没有可用歌词' };
+                }
+                if (m.syncedLyrics) {
+                    await this.lyricsManager.saveLyrics(song.title, m.syncedLyrics, 'lrclib');
+                } else if (m.plainLyrics) {
+                    // 纯文本歌词（无时间轴）：显示不逐句滚动，但内容可用
+                    await this.lyricsManager.saveLyrics(song.title, m.plainLyrics, 'lrclib');
+                } else {
+                    return { success: false, error: '在线歌词库没有可用歌词' };
+                }
+                return {
+                    success: true,
+                    matchedTrack: m.matchedTrack,
+                    matchedArtist: m.matchedArtist,
+                    exact: !!m.exact,
+                    noTimeline: !!m.noTimeline,
+                    durationDelta: m.durationDelta || 0
+                };
+            } catch (error) {
+                console.error('在线歌词匹配失败:', error);
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 歌词偏移微调（差量，毫秒；写进 LRC 文件头的 [offset:] 标签）
+        ipcMain.handle('lyrics-adjust-offset', async (event, songTitle, deltaMs) => {
+            try {
+                const result = await this.lyricsManager.getLyrics(songTitle);
+                if (!result.success) return { success: false, error: '歌词文件不存在' };
+                const current = this.lyricsManager.readOffsetMs(result.lyrics);
+                const next = await this.lyricsManager.writeOffsetMs(songTitle, current + Math.round(deltaMs));
+                return { success: true, offsetMs: next };
+            } catch (error) {
+                return { success: false, error: error.message };
+            }
+        });
+
+        // 智能对齐：本地快转写前 45s → 与在线歌词句对模糊匹配 → 偏移中位数写 [offset:]
+        ipcMain.handle('lyrics-align', async (event, songId) => {
+            return await this.alignLyrics(songId);
         });
 
         // 取消下载：终止所有下载相关子进程并清理临时文件
@@ -1570,7 +1787,9 @@ class BiliMusicPlayer {
 
         // 歌词功能
         ipcMain.handle('lyrics-download', async (event, url, title) => {
-            return await this.lyricsManager.downloadLyrics(url, title);
+            return await this.lyricsManager.downloadLyrics(url, title, (progress) => {
+                event.sender.send('lyrics-download-progress', progress);
+            });
         });
 
         ipcMain.handle('lyrics-search', async (event, query) => {
@@ -1579,8 +1798,11 @@ class BiliMusicPlayer {
 
         ipcMain.handle('lyrics-get', async (event, title) => {
             const result = await this.lyricsManager.getLyrics(title);
-            // 渲染进程需要的是 [{time, text}] 数组，这里解析 LRC 原文
+            // 渲染进程需要的是 [{time, text}] 数组，这里解析 LRC 原文；
+            // offsetMs / source 一并返回（面板显示偏移与来源徽章）
             if (result.success && result.lyrics) {
+                result.offsetMs = this.lyricsManager.readOffsetMs(result.lyrics);
+                result.source = this.lyricsManager.readSource(result.lyrics);
                 result.lyrics = this.lyricsManager.parseLrcContent(result.lyrics) || [];
             }
             return result;
@@ -2225,9 +2447,9 @@ class BiliMusicPlayer {
         });
 
         // 兼容性处理器 - 歌词保存
-        ipcMain.handle('lyrics-save', async (event, songTitle, lrcContent) => {
+        ipcMain.handle('lyrics-save', async (event, songTitle, lrcContent, source) => {
             try {
-                const result = await this.lyricsManager.saveLyrics(songTitle, lrcContent);
+                const result = await this.lyricsManager.saveLyrics(songTitle, lrcContent, source || null);
                 return {
                     success: true,
                     result
@@ -2249,7 +2471,7 @@ class BiliMusicPlayer {
                     this.lyricsWindow = null;
                     return { success: true, visible: false };
                 } else {
-                    await this.showLyricsWindow('♪ 暂无歌词 ♪');
+                    await this.showLyricsWindow();
                     return { success: true, visible: true };
                 }
             } catch (error) {
@@ -2263,25 +2485,7 @@ class BiliMusicPlayer {
 
         // 兼容性处理器 - 歌词窗口更新
         ipcMain.handle('lyrics-window-update', async (event, text) => {
-            try {
-                if (this.lyricsWindow && !this.lyricsWindow.isDestroyed()) {
-                    await this.lyricsWindow.webContents.executeJavaScript(`
-                        const lyricsElement = document.getElementById('lyrics-text');
-                        if (lyricsElement) {
-                            lyricsElement.textContent = \`${text.replace(/`/g, '\\`').replace(/\\/g, '\\\\')}\`;
-                        }
-                    `);
-                    return { success: true };
-                } else {
-                    return { success: false, error: '歌词窗口未打开' };
-                }
-            } catch (error) {
-                console.error('更新歌词窗口失败:', error);
-                return {
-                    success: false,
-                    error: error.message
-                };
-            }
+            return await this.updateLyricsWindowText(text);
         });
 
         // 桌面歌词窗口事件处理
@@ -2293,6 +2497,14 @@ class BiliMusicPlayer {
                 this.lyricsWindow.close();
                 this.lyricsWindow = null;
             }
+        });
+
+        // 置顶锁定切换（锁定 = 始终在最上层，解锁后允许被其他窗口覆盖）
+        ipcMain.on('lyrics-window-lock-toggle', () => {
+            if (!this.lyricsWindow || this.lyricsWindow.isDestroyed()) return;
+            this.lyricsLocked = !this.lyricsLocked;
+            this.lyricsWindow.setAlwaysOnTop(this.lyricsLocked, 'screen-saver');
+            this.lyricsWindow.webContents.send('lyrics-lock-changed', this.lyricsLocked);
         });
         
         // 歌词窗口拖动开始
@@ -2605,8 +2817,8 @@ class BiliMusicPlayer {
                 });
             };
 
-            // 阶段 1: 下载视频
-            sendStage('正在下载视频文件...');
+            // 阶段 1: 下载音频流（不保留原始视频）
+            sendStage('正在下载音频流...');
 
             // 获取视频信息
             const videoInfo = await this.getVideoInfo(url);
@@ -2628,6 +2840,7 @@ class BiliMusicPlayer {
                 '--extract-audio',
                 '--audio-format', 'best',
                 '--audio-quality', '0',
+                '--no-keep-video',
                 '--output', tempAudioPath,
                 '--no-playlist',
                 ...networkArgs,
@@ -2694,68 +2907,74 @@ class BiliMusicPlayer {
                 console.log('音量同步失败（不影响下载）:', error.message);
             }
 
-            // 阶段 4: 下载歌词
-            sendStage('正在下载歌词...');
-            // 按用户选择下载字幕（默认开）
-            if (options.downloadLyrics !== false) {
+            // 阶段 4: 获取歌词（合并后的单一链路：平台字幕 → 在线匹配 → 本地识别）
+            sendStage('正在获取歌词...');
+            if (options.getLyrics !== false) {
+                let gotLyrics = false;
                 try {
                     const proxy = await this.database.getSetting('download_proxy', '');
                     this.lyricsManager.proxy = (proxy && typeof proxy === 'string') ? proxy.trim() : '';
-                    const result = await this.lyricsManager.downloadLyrics(url, videoInfo.title);
-                    if (!result) {
-                        // 未找到歌词，显示提示并短暂延迟
-                        this.mainWindow.webContents.send('download-stage-progress', {
-                            stage: 4,
-                            totalStages: totalStages,
-                            description: '未找到歌词',
-                            isComplete: false
-                        });
-                        // 延迟500ms让用户看到
-                        await new Promise(resolve => setTimeout(resolve, 500));
-                    }
-                } catch (error) {
-                    console.log('下载歌词失败:', error);
-                    // 下载出错，显示提示并短暂延迟
-                    this.mainWindow.webContents.send('download-stage-progress', {
-                        stage: 4,
-                        totalStages: totalStages,
-                        description: '未找到歌词',
-                        isComplete: false
+                    const result = await this.lyricsManager.downloadLyrics(url, videoInfo.title, (progress) => {
+                        if (this.mainWindow) {
+                            this.mainWindow.webContents.send('lyrics-download-progress', progress);
+                        }
                     });
-                    await new Promise(resolve => setTimeout(resolve, 500));
+                    gotLyrics = !!result;
+                } catch (error) {
+                    console.log('下载字幕失败:', error.message);
+                }
+
+                // 平台没有字幕 → 在线歌词库（LRCLIB；纯文本版本会由对齐管线
+                // 自动用本地识别补时间轴）
+                if (!gotLyrics) {
+                    try {
+                        if (this.mainWindow) {
+                            this.mainWindow.webContents.send('transcribe-status', '正在匹配在线歌词库...');
+                        }
+                        const m = await this.lyricsManager.matchOnlineLyrics(videoInfo.title, videoInfo.uploader, videoInfo.duration);
+                        if (m && (m.syncedLyrics || m.plainLyrics)) {
+                            await this.lyricsManager.saveLyrics(videoInfo.title, m.syncedLyrics || m.plainLyrics, 'lrclib');
+                            gotLyrics = true;
+                            // 纯文本无时间轴：自动用本地识别补时间轴（文本保留在线版本）
+                            if (!m.syncedLyrics) {
+                                const ts = await this.timestampPlainLyrics(songId);
+                                if (ts && ts.success && this.mainWindow) {
+                                    this.mainWindow.webContents.send('transcribe-status', ts.message);
+                                }
+                            }
+                        }
+                    } catch (error) {
+                        console.log('在线歌词匹配失败:', error.message);
+                    }
+                }
+
+                // 在线也没有 → 本地 AI 识别（模型就绪时）
+                if (!gotLyrics) {
+                    try {
+                        const modelKey = await this.database.getSetting('whisper_model', 'small');
+                        if (await this.toolsManager.isWhisperModelDownloaded(modelKey)) {
+                            if (this.mainWindow) {
+                                this.mainWindow.webContents.send('transcribe-status', '在线无歌词，正在本地 AI 识别...');
+                            }
+                            this.downloadCancelRequested = false;
+                            const transcribed = await this.transcribeSong(songId);
+                            if (transcribed && transcribed.success && transcribed.lrc) {
+                                await this.lyricsManager.saveLyrics(videoInfo.title, transcribed.lrc, 'whisper');
+                                if (this.mainWindow) {
+                                    this.mainWindow.webContents.send('transcribe-status', 'AI 歌词识别完成');
+                                }
+                            }
+                        } else if (this.mainWindow) {
+                            this.mainWindow.webContents.send('transcribe-status', '未找到歌词（本地识别模型未安装）');
+                        }
+                    } catch (transcribeError) {
+                        console.log('自动 AI 转写失败（不影响下载结果）:', transcribeError.message);
+                    }
                 }
             }
 
             // 阶段 5: 完成
             sendStage('下载完成！', true);
-
-            // 下载后自动 AI 转写（用户勾选且模型就绪时）
-            if (options.autoTranscribe) {
-                try {
-                    const modelKey = await this.database.getSetting('whisper_model', 'base');
-                    if (await this.toolsManager.isWhisperModelDownloaded(modelKey)) {
-                        if (this.mainWindow) {
-                            this.mainWindow.webContents.send('transcribe-status', '下载完成，正在 AI 识别歌词...');
-                        }
-                        this.downloadCancelRequested = false;
-                        const transcribed = await this.transcribeSong(songId);
-                        if (transcribed && transcribed.success && transcribed.lrc) {
-                            await this.lyricsManager.saveLyrics(videoInfo.title, transcribed.lrc);
-                            if (this.mainWindow) {
-                                this.mainWindow.webContents.send('transcribe-status', 'AI 歌词识别完成');
-                            }
-                            console.log('自动 AI 转写完成:', videoInfo.title);
-                        }
-                    } else {
-                        console.log('自动转写跳过：模型未下载');
-                        if (this.mainWindow) {
-                            this.mainWindow.webContents.send('transcribe-status', '模型未下载，已跳过 AI 转写');
-                        }
-                    }
-                } catch (transcribeError) {
-                    console.log('自动 AI 转写失败（不影响下载结果）:', transcribeError.message);
-                }
-            }
 
             return {
                 success: true,
@@ -2908,6 +3127,13 @@ class BiliMusicPlayer {
                         killed = true;
                         try { child.kill(); } catch (e) { /* 忽略 */ }
                     }
+                    // whisper 的进度（progress = XX%）走 stderr，与 stdout 一起转发进度流
+                    if (!silent && this.mainWindow) {
+                        this.mainWindow.webContents.send('download-progress', {
+                            type: 'stdout',
+                            data: data.toString()
+                        });
+                    }
                 });
 
                 child.on('close', (code) => {
@@ -2972,7 +3198,7 @@ class BiliMusicPlayer {
         }
 
         // 2. 检查模型（模型由用户选择下载）
-        const modelKey = await this.database.getSetting('whisper_model', 'base');
+        const modelKey = await this.database.getSetting('whisper_model', 'small');
         if (!(await this.toolsManager.isWhisperModelDownloaded(modelKey))) {
             return { success: false, modelMissing: true, modelKey };
         }
@@ -2990,16 +3216,43 @@ class BiliMusicPlayer {
             { silent: true }
         );
 
+        // 3.5 VAD 模型（silero 人声检测）：识别前过滤无人声段，纯音乐不再产出 [Muziek] 幻听。
+        // 约 0.9MB，首次自动下载；下载失败静默降级为无 VAD 识别，不阻塞流程。
+        let vadModelPath = null;
+        if (await this.toolsManager.isVadModelDownloaded()) {
+            vadModelPath = this.toolsManager.getVadModelPath();
+        } else {
+            if (this.mainWindow) {
+                this.mainWindow.webContents.send('transcribe-status', '正在下载人声检测模型（仅首次，约 1MB）...');
+            }
+            try {
+                await this.toolsManager.downloadVadModel();
+                vadModelPath = this.toolsManager.getVadModelPath();
+            } catch (error) {
+                console.warn('VAD 模型下载失败，本次不启用 VAD:', error.message);
+            }
+        }
+
         // 4. whisper 识别（-l auto 多语言自动检测；-olrc 输出歌词；-pp 输出进度百分比）
         try {
             if (this.mainWindow) {
                 this.mainWindow.webContents.send('transcribe-status', '正在识别（耗时取决于音频长度与模型规格）...');
             }
             this.downloadCancelRequested = false;
-            await this.executeCommand(
-                ['whisper', '-m', modelPath, '-f', wavPath, '-l', 'auto', '-olrc', '-of', outPrefix, '-pp'],
-                { silent: false }
-            );
+            const whisperArgs = [
+                // 更稳定的 beam search + 零温度解码，减少歌曲伴奏导致的幻听和错词。
+                // -ml 40 字符兜底上限：VAD 找不到停顿的连唱段不至于整段挤一行。
+                '-m', modelPath, '-f', wavPath, '-l', 'auto',
+                '-bs', '5', '-bo', '5', '-tp', '0', '-ml', '40'
+            ];
+            if (vadModelPath) {
+                // VAD 停顿切句（跟随自然停顿，而非硬编码合并）：
+                // -vsd 500 = 停顿 ≥500ms 才切行——换气（一两百毫秒）不切，
+                // 唱完一句的停顿才切，切出的行即歌词整句。无 VAD 时降级为仅 -ml 截断。
+                whisperArgs.push('-vm', vadModelPath, '-vsd', '500');
+            }
+            whisperArgs.push('-olrc', '-of', outPrefix, '-pp');
+            await this.executeCommand(['whisper', ...whisperArgs], { silent: false });
 
             // 5. 读取 LRC 结果
             const lrcPath = outPrefix + '.lrc';
@@ -3018,6 +3271,162 @@ class BiliMusicPlayer {
             await fs.unlink(outPrefix + '.srt').catch(() => {});
             await fs.unlink(outPrefix + '.json').catch(() => {});
             await fs.unlink(outPrefix + '.tsv').catch(() => {});
+        }
+    }
+
+    // ==================== 歌词智能对齐（逐句校准） ====================
+
+    // 在线歌词与本地音源版本不一致时会错位。做法（专业管线）：
+    // 用已下载的最小模型转写本地整首 → 与在线歌词逐句模糊配对
+    // （bigram Dice 相似度 + ±10s 时间窗防副歌错配）→ 配对句的时间戳
+    // 直接改写为本地演唱时刻（句首精确切换），未配对句按全局偏移中位数平移。
+    // 防错配：至少 2 对、全局偏移超过 ±5s 视为版本不同放弃。
+    async alignLyrics(songId) {
+        const song = await this.database.getSongById(songId);
+        if (!song) return { success: false, error: '内容不存在' };
+        if (!fsSync.existsSync(song.path)) return { success: false, error: '音频文件不存在' };
+
+        const got = await this.lyricsManager.getLyrics(song.title);
+        if (!got.success) return { success: false, error: '还没有歌词，请先获取歌词' };
+        const lrcLines = this.lyricsManager.parseLrcContent(got.lyrics);
+        if (!lrcLines || !lrcLines.length) {
+            return { success: false, error: '歌词内容为空' };
+        }
+        // 纯文本歌词（在线库只查到无时间轴版本）：自动转本地加时间戳管线
+        if (lrcLines[0].time === null) {
+            return await this.timestampPlainLyrics(songId);
+        }
+
+        if (this.mainWindow) {
+            this.mainWindow.webContents.send('transcribe-status', '逐句校准：正在逐句比对时间轴...');
+        }
+        const { wavLines, error } = await this.quickTranscribeWav(song, '逐句校准');
+        if (error) {
+            if (error === 'cancelled') return { success: false, cancelled: true };
+            return { success: false, error };
+        }
+
+        try {
+            // 配对 + 偏移计算（时长差 <2s 判同版本只做全局微移；结构差异才分段）
+            const aligned = this.lyricsManager.computeAlignedTimes(lrcLines, wavLines, song.duration);
+            if (aligned.error) {
+                return { success: false, error: aligned.error };
+            }
+            await this.lyricsManager.writeAlignedLyrics(song.title, got.lyrics, aligned.alignedTimes, aligned.median);
+
+            const globalNote = Math.abs(aligned.median) < 0.15 ? '整体无偏移' : `整体偏移 ${aligned.median.toFixed(1)}s 已修正`;
+            return {
+                success: true,
+                offsetMs: Math.round(aligned.median * 1000),
+                pairs: aligned.pairs,
+                message: `已逐句校准 ${aligned.pairs}/${aligned.total} 句（${globalNote}）`
+            };
+        } catch (error) {
+            console.error('歌词对齐失败:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // 给纯文本歌词加时间轴：在线库只查到无时间轴版本时，用本地 whisper 的
+    // 演唱时刻配时间戳。保留在线的文本（比本地识别准），只取本地的时间
+    async timestampPlainLyrics(songId) {
+        const song = await this.database.getSongById(songId);
+        if (!song) return { success: false, error: '内容不存在' };
+        if (!fsSync.existsSync(song.path)) return { success: false, error: '音频文件不存在' };
+
+        const got = await this.lyricsManager.getLyrics(song.title);
+        if (!got.success) return { success: false, error: '还没有歌词' };
+        const plainLines = this.lyricsManager.parseLrcContent(got.lyrics);
+        if (!plainLines || !plainLines.length || plainLines[0].time !== null) {
+            return { success: false, error: '歌词已有时间轴' };
+        }
+
+        const { wavLines, error } = await this.quickTranscribeWav(song, '添加时间轴');
+        if (error) {
+            if (error === 'cancelled') return { success: false, cancelled: true };
+            return { success: false, error };
+        }
+
+        try {
+            // 合成：文本用在线的（准确），行拆分与时间用本地的（跟演唱走）
+            const merged = this.lyricsManager.mergePlainWithWav(plainLines, wavLines);
+            const need = Math.max(3, Math.ceil(plainLines.length * 0.25));
+            if (merged.matched < need) {
+                return { success: false, error: `在线歌词与本地识别对不上（只配对上 ${merged.matched}/${plainLines.length} 句），未添加时间轴` };
+            }
+            await this.lyricsManager.writeMergedLyrics(song.title, got.lyrics, merged.lines);
+            const splitNote = merged.lines.length > plainLines.length
+                ? `，已按演唱拆分为 ${merged.lines.length} 行` : '';
+            return {
+                success: true,
+                pairs: merged.matched,
+                message: `已用本地识别为在线歌词添加时间轴（${merged.matched}/${plainLines.length} 句对齐${splitNote}）`
+            };
+        } catch (error) {
+            console.error('纯文本加时间戳失败:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // 快速整首转写（逐句校准 / 纯文本加时间戳共用）：VAD 跳过间奏。
+    // 返回 { wavLines } 或 { error }（'cancelled' 表示用户取消），临时文件自动清理。
+    // 模型用用户当前设置的规格（一般人只装一个，且转写质量直接决定
+    // 校准/加时间戳质量）；当前规格未装时回退 base → tiny
+    async quickTranscribeWav(song, purpose) {
+        const whisperPath = await this.toolsManager.getExecutableCommand('whisper');
+        if (!whisperPath) return { error: '语音识别工具不可用' };
+
+        let modelKey = await this.database.getSetting('whisper_model', 'small');
+        if (!(await this.toolsManager.isWhisperModelDownloaded(modelKey))) {
+            for (const k of ['base', 'tiny']) {
+                if (await this.toolsManager.isWhisperModelDownloaded(k)) { modelKey = k; break; }
+            }
+        }
+        const modelPath = this.toolsManager.getWhisperModelPath(modelKey);
+
+        // 整首转写（逐句校准需要全篇；VAD 会跳过间奏，比名义时长快）
+        if (this.mainWindow) {
+            this.mainWindow.webContents.send('transcribe-status', `${purpose}：本地快转写整首（${modelKey} 模型）...`);
+        }
+        const cleanTitle = this.cleanFileName(song.title);
+        const wavPath = path.join(this.tempDir, `${cleanTitle}_align_temp.wav`);
+        const outPrefix = path.join(this.tempDir, `${cleanTitle}_align_temp`);
+        try {
+            // 清掉上次可能残留的产物：whisper 若失败，readFile 会拿到旧 LRC，
+            // 用陈旧时间轴配对（表现为"几秒就完成"且时间轴不准）
+            for (const ext of ['.lrc', '.txt', '.srt', '.json', '.tsv']) {
+                await fs.unlink(outPrefix + ext).catch(() => {});
+            }
+            this.downloadCancelRequested = false;
+            await this.executeCommand(
+                ['ffmpeg', '-i', song.path, '-ar', '16000', '-ac', '1', '-y', wavPath],
+                { silent: true }
+            );
+
+            const args = ['-m', modelPath, '-f', wavPath, '-l', 'auto', '-bs', '5', '-bo', '5', '-tp', '0', '-ml', '40'];
+            if (await this.toolsManager.isVadModelDownloaded()) {
+                args.push('-vm', this.toolsManager.getVadModelPath(), '-vsd', '500');
+            }
+            args.push('-olrc', '-of', outPrefix);
+            await this.executeCommand(['whisper', ...args], { silent: true });
+
+            let wavLrc = null;
+            try { wavLrc = await fs.readFile(outPrefix + '.lrc', 'utf8'); } catch (e) { /* 无产物 */ }
+            if (!wavLrc) return { error: '快速识别失败，请重试' };
+            const wavLines = this.lyricsManager.parseLrcContent(wavLrc);
+            if (!wavLines || !wavLines.length) {
+                return { error: '未能识别出人声' };
+            }
+            return { wavLines };
+        } catch (error) {
+            if (this.downloadCancelRequested) return { error: 'cancelled' };
+            console.error('快速转写失败:', error);
+            return { error: error.message };
+        } finally {
+            await fs.unlink(wavPath).catch(() => {});
+            for (const ext of ['.lrc', '.txt', '.srt', '.json', '.tsv']) {
+                await fs.unlink(outPrefix + ext).catch(() => {});
+            }
         }
     }
 

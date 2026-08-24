@@ -47,13 +47,19 @@ window.ContextMenus = {
 
         const menu = document.createElement('div');
         menu.className = 'context-menu';
+        // 已有歌词 → 菜单文案区分，避免无意重复识别
+        const hasLyrics = this.songHasLyrics ? this.songHasLyrics(song) : false;
         menu.innerHTML = `
             <div class="menu-item" data-action="play">播放</div>
             <div class="menu-item" data-action="add-to-playlist">添加到歌单</div>
             ${this.currentView.startsWith('playlist-') ? '<div class="menu-item" data-action="remove-from-playlist">从歌单移除</div>' : ''}
             <div class="menu-item" data-action="edit-info">修改信息</div>
             <div class="menu-separator"></div>
-            <div class="menu-item" data-action="transcribe">AI 识别歌词（多语言）</div>
+            <div class="menu-item" data-action="fetch-lyrics">${hasLyrics ? '重新获取歌词（覆盖当前）' : '获取歌词（自动选最佳来源）'}</div>
+            ${hasLyrics ? `
+            <div class="menu-separator"></div>
+            <div class="menu-item" data-action="lyrics-earlier">歌词慢了 · 提前 0.5 秒</div>
+            <div class="menu-item" data-action="lyrics-later">歌词快了 · 延后 0.5 秒</div>` : ''}
             <div class="menu-separator"></div>
             <div class="menu-item" data-action="info">详细信息</div>
             <div class="menu-separator"></div>
@@ -115,8 +121,24 @@ window.ContextMenus = {
             case 'analyze-volume':
                 await this.analyzeSongVolume(song.id);
                 break;
+            case 'fetch-lyrics':
+                await this.fetchLyricsSmart(song);
+                break;
+            case 'match-online':
+                await this.matchOnlineLyrics(song);
+                break;
             case 'transcribe':
                 await this.transcribeSong(song);
+                break;
+            case 'download-subtitles':
+                await this.downloadSubtitlesForSong(song);
+                break;
+            // deltaMs 为正 = 歌词提前显示（LRC offset 标准），与菜单文案方向一致
+            case 'lyrics-earlier':
+                await this.adjustLyricsOffset(song, 500);
+                break;
+            case 'lyrics-later':
+                await this.adjustLyricsOffset(song, -500);
                 break;
             case 'delete':
                 await this.deleteSong(song.id);

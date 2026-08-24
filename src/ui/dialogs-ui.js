@@ -270,6 +270,122 @@ window.DialogsUI = {
 
     // ---------- 设置 ----------
 
+    async renderWhisperModelsInSettings(container) {
+        if (!container) return;
+
+        const refresh = async () => {
+            container.innerHTML = '<small style="color: var(--text-faint);">正在读取模型状态...</small>';
+            let status;
+            try {
+                status = await electronAPI.whisper.getStatus();
+            } catch (error) {
+                container.innerHTML = '<small style="color: var(--warning);">语音识别服务不可用</small>';
+                return;
+            }
+            if (!status || !status.success) {
+                container.innerHTML = `<small style="color: var(--warning);">${utils.escapeHtml((status && status.error) || '读取模型状态失败')}</small>`;
+                return;
+            }
+
+            container.innerHTML = '';
+            for (const model of Object.values(status.models || {})) {
+                const isCurrent = model.key === status.currentModel && model.downloaded;
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex; align-items:center; gap:10px; padding:10px 11px; border:1px solid var(--border); border-radius:8px; margin-bottom:7px;';
+                row.innerHTML = `
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-size:13px; font-weight:600; color:var(--text); display:flex; align-items:center; gap:7px;">
+                            ${utils.escapeHtml(model.label)}
+                            ${model.recommended ? '<span style="font-size:10px; font-weight:700; color:var(--accent); background:var(--accent-soft); padding:1px 7px; border-radius:8px;">推荐</span>' : ''}
+                        </div>
+                        <div style="font-size:11.5px; color:var(--text-faint); margin-top:2px;">${utils.escapeHtml(model.desc || '')} · ${utils.escapeHtml(model.sizeText || '')}${model.downloaded ? ` · 已下载 ${utils.formatFileSize(model.sizeBytes)}` : ''}</div>
+                        <div class="settings-model-progress" style="display:none; margin-top:6px;">
+                            <div class="progress-bar-container" style="height:5px;"><div class="progress-bar"><div class="progress-filled" style="width:0%"></div></div></div>
+                            <div class="settings-model-progress-text" style="font-size:11px; color:var(--text-muted); margin-top:3px;">准备下载...</div>
+                        </div>
+                    </div>
+                    <div class="settings-model-actions" style="display:flex; gap:6px; flex-shrink:0;"></div>
+                `;
+                const actions = row.querySelector('.settings-model-actions');
+
+                if (isCurrent) {
+                    actions.innerHTML = '<span style="font-size:12px; font-weight:700; color:var(--accent);">使用中</span>';
+                } else if (model.downloaded) {
+                    const useBtn = document.createElement('button');
+                    useBtn.className = 'btn btn-primary';
+                    useBtn.style.cssText = 'padding:5px 10px; font-size:12px;';
+                    useBtn.textContent = '使用';
+                    useBtn.addEventListener('click', async () => {
+                        const result = await electronAPI.whisper.setModel(model.key);
+                        if (result && result.success) {
+                            this.showMessage(`已切换为 ${model.label}`, 'success');
+                            refresh();
+                        } else {
+                            this.showMessage((result && result.error) || '切换模型失败', 'error');
+                        }
+                    });
+
+                    const deleteBtn = document.createElement('button');
+                    deleteBtn.className = 'btn btn-secondary';
+                    deleteBtn.style.cssText = 'padding:5px 10px; font-size:12px;';
+                    deleteBtn.textContent = '删除';
+                    deleteBtn.addEventListener('click', async () => {
+                        const confirmed = await this.showConfirm({
+                            title: '删除模型',
+                            message: `确定删除 ${model.label} 吗？下次使用需重新下载。`,
+                            confirmText: '删除',
+                            danger: true
+                        });
+                        if (!confirmed) return;
+                        const result = await electronAPI.whisper.deleteModel(model.key);
+                        if (result && result.success) {
+                            this.showMessage('模型已删除', 'success');
+                            refresh();
+                        } else {
+                            this.showMessage((result && result.error) || '删除模型失败', 'error');
+                        }
+                    });
+                    actions.append(useBtn, deleteBtn);
+                } else {
+                    const downloadBtn = document.createElement('button');
+                    downloadBtn.className = 'btn btn-primary';
+                    downloadBtn.style.cssText = 'padding:5px 10px; font-size:12px;';
+                    downloadBtn.textContent = '下载';
+                    downloadBtn.addEventListener('click', async () => {
+                        downloadBtn.disabled = true;
+                        const progressWrap = row.querySelector('.settings-model-progress');
+                        const progressBar = progressWrap.querySelector('.progress-filled');
+                        const progressText = row.querySelector('.settings-model-progress-text');
+                        progressWrap.style.display = 'block';
+                        const unsub = electronAPI.whisper.onModelProgress((data) => {
+                            if (data.modelKey !== model.key) return;
+                            progressBar.style.width = `${data.progress.toFixed(1)}%`;
+                            progressText.textContent = `${data.progress.toFixed(1)}%（${utils.formatFileSize(data.downloaded)} / ${utils.formatFileSize(data.total)}）`;
+                        });
+                        try {
+                            const result = await electronAPI.whisper.downloadModel(model.key);
+                            if (!result || !result.success) throw new Error((result && result.error) || '下载失败');
+                            const selected = await electronAPI.whisper.setModel(model.key);
+                            if (!selected || !selected.success) throw new Error((selected && selected.error) || '设置模型失败');
+                            this.showMessage(`${model.label} 下载完成并已启用`, 'success');
+                            refresh();
+                        } catch (error) {
+                            this.showMessage('下载失败: ' + error.message, 'error');
+                            progressWrap.style.display = 'none';
+                            downloadBtn.disabled = false;
+                        } finally {
+                            unsub();
+                        }
+                    });
+                    actions.appendChild(downloadBtn);
+                }
+                container.appendChild(row);
+            }
+        };
+
+        await refresh();
+    },
+
     async showSettingsDialog() {
         try {
             // 获取当前设置
@@ -467,10 +583,10 @@ window.DialogsUI = {
                                         <div class="settings-group">
                                             <div class="setting-item">
                                                 <label>语音识别模型</label>
-                                                <small>音频转歌词使用本地 AI 模型（whisper，中/英/日/俄/法/德等多语言自动检测）。模型体积较大，按需选择下载，随时可删除释放空间。图片 OCR 使用 Windows 内置引擎，无需下载。</small>
+                                                <small>音频转歌词使用本地 AI 模型（whisper，中/英/日/俄/法/德等多语言自动检测）。推荐 Small 以获得更好的歌词准确率；当前使用的模型不可删除，其他已下载模型可删除释放空间。</small>
                                             </div>
+                                            <div id="settings-whisper-model-list"></div>
                                             <div class="setting-actions">
-                                                <button class="btn btn-primary" id="manage-whisper-models-btn">管理模型</button>
                                                 <button class="btn btn-secondary" id="batch-transcribe-btn">批量识别已有内容</button>
                                             </div>
                                             <small style="font-size: 11.5px; color: var(--text-faint);">「批量识别」对库里还没有歌词的内容逐个本地识别（无需重新下载），也可右键单个内容识别。</small>
@@ -834,13 +950,7 @@ window.DialogsUI = {
             }
 
             // ==================== AI 歌词识别事件绑定 ====================
-            const manageModelsBtn = dialog.querySelector('#manage-whisper-models-btn');
-            if (manageModelsBtn) {
-                manageModelsBtn.addEventListener('click', async () => {
-                    dialog.remove();
-                    await this.showWhisperModelManager(false);
-                });
-            }
+            await this.renderWhisperModelsInSettings(dialog.querySelector('#settings-whisper-model-list'));
 
             const batchTranscribeBtn = dialog.querySelector('#batch-transcribe-btn');
             if (batchTranscribeBtn) {
@@ -1118,7 +1228,7 @@ window.DialogsUI = {
                     try {
                         output.innerHTML = consoleHeader('诊断工具状态') + '<p>正在诊断工具状态...</p>';
 
-                        const tools = ['yt-dlp', 'ffmpeg'];
+                        const tools = ['yt-dlp', 'ffmpeg', 'whisper'];
                         let html = '<h4>工具诊断结果:</h4>';
 
                         for (const tool of tools) {
@@ -1168,7 +1278,7 @@ window.DialogsUI = {
                     try {
                         output.innerHTML = consoleHeader('强制重新下载工具') + '<p>正在强制重新下载工具...</p>';
 
-                        const tools = ['yt-dlp', 'ffmpeg'];
+                        const tools = ['yt-dlp', 'ffmpeg', 'whisper'];
                         let html = '<h4>强制重新下载结果:</h4>';
 
                         for (const tool of tools) {

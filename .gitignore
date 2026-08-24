@@ -64,4 +64,6 @@ nul
 error.log
 
 # 开发日志
-*开发日志.md 
+*开发日志.md
+
+.playwright-cli/
